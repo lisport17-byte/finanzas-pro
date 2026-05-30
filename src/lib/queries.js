@@ -22,9 +22,11 @@ export const auth = {
 
 /** Inserta tipos de servicio predeterminados si el usuario es nuevo */
 export async function inicializarDatos(userId) {
+  // Filtra por user_id para evitar race conditions con múltiples llamadas
   const { data: existing } = await supabase
     .from('tipos_servicio')
     .select('id')
+    .eq('user_id', userId)
     .limit(1)
 
   if (existing && existing.length === 0) {

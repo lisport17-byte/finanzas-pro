@@ -29,11 +29,10 @@ export default function App() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Verificar sesión existente
+    // Verificar sesión existente (NO llama inicializarDatos aquí para evitar duplicados)
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         setUser(session.user)
-        inicializarDatos(session.user.id)
       }
       setLoading(false)
     })
@@ -43,6 +42,7 @@ export default function App() {
       async (event, session) => {
         if (session?.user) {
           setUser(session.user)
+          // Solo inicializar en el primer login real, no en cada recarga
           if (event === 'SIGNED_IN') {
             await inicializarDatos(session.user.id)
           }
