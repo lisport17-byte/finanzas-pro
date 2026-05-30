@@ -29,13 +29,21 @@ export default function App() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Timeout de seguridad: si getSession tarda más de 8s, carga igual
+    const timeout = setTimeout(() => setLoading(false), 8000)
+
     // Verificar sesión existente (NO llama inicializarDatos aquí para evitar duplicados)
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        setUser(session.user)
-      }
-      setLoading(false)
-    })
+    supabase.auth.getSession()
+      .then(({ data }) => {
+        if (data?.session?.user) {
+          setUser(data.session.user)
+        }
+      })
+      .catch(() => {}) // silenciar error de red
+      .finally(() => {
+        clearTimeout(timeout)
+        setLoading(false)
+      })
 
     // Escuchar cambios de autenticación
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
