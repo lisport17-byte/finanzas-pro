@@ -21,12 +21,14 @@ const FORM_INICIAL = {
 
 function calcularRenovacion(inicio, tipo) {
   if (!inicio) return ''
+  if (tipo === 'pago_unico') return '9999-12-31' // nunca vence
   const fecha = new Date(inicio + 'T00:00:00')
   const nueva = tipo === 'mensual' ? addMonths(fecha, 1) : addYears(fecha, 1)
   return nueva.toISOString().split('T')[0]
 }
 
-function diasRestantes(fecha, estado) {
+function diasRestantes(fecha, estado, tipo) {
+  if (tipo === 'pago_unico') return { texto: 'Pago Único', clase: 'text-indigo-400' }
   if (estado === 'suspendido') return { texto: 'Suspendido', clase: 'text-amber-400' }
   if (estado === 'cancelado') return { texto: 'Cancelado', clase: 'text-slate-500' }
   const d = differenceInDays(new Date(fecha + 'T00:00:00'), new Date())
@@ -180,7 +182,8 @@ export default function Servicios() {
                   {filtro ? 'Sin resultados' : 'No hay servicios registrados'}
                 </td></tr>
               ) : filtrados.map((s) => {
-                const { texto, clase } = diasRestantes(s.fecha_renovacion, s.estado)
+                const { texto, clase } = diasRestantes(s.fecha_renovacion, s.estado, s.tipo_renovacion)
+                const esPagoUnico = s.tipo_renovacion === 'pago_unico'
                 return (
                   <tr key={s.id} className="table-row">
                     <td className="table-cell">
@@ -192,13 +195,19 @@ export default function Servicios() {
                     </td>
                     <td className="table-cell hidden md:table-cell text-right font-mono">
                       <span className="text-emerald-400">{s.moneda === 'USD' ? '$' : 'Bs.'}{Number(s.precio).toFixed(2)}</span>
-                      <span className="text-xs text-slate-500 block">{s.tipo_renovacion}</span>
+                      <span className="text-xs text-slate-500 block">
+                        {esPagoUnico ? 'Pago único' : s.tipo_renovacion}
+                      </span>
                     </td>
                     <td className="table-cell hidden md:table-cell text-center text-xs text-slate-400">
-                      <span className="flex items-center justify-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {format(new Date(s.fecha_renovacion + 'T00:00:00'), 'dd MMM yyyy', { locale: es })}
-                      </span>
+                      {esPagoUnico ? (
+                        <span className="text-indigo-400 font-medium">Sin renovación</span>
+                      ) : (
+                        <span className="flex items-center justify-center gap-1">
+                          <Calendar className="w-3 h-3" />
+                          {format(new Date(s.fecha_renovacion + 'T00:00:00'), 'dd MMM yyyy', { locale: es })}
+                        </span>
+                      )}
                     </td>
                     <td className="table-cell text-center">
                       <span className={`text-xs ${clase}`}>{texto}</span>
@@ -279,16 +288,21 @@ export default function Servicios() {
                 <select className="input" value={form.tipo_renovacion} onChange={e => setForm(actualizarRenovacion({...form, tipo_renovacion: e.target.value}))}>
                   <option value="mensual">Mensual</option>
                   <option value="anual">Anual</option>
+                  <option value="pago_unico">Pago Único (sin renovación)</option>
                 </select>
               </div>
-              <div>
-                <label className="label">Fecha de renovación *</label>
-                <input type="date" className="input" value={form.fecha_renovacion} onChange={e => setForm({...form, fecha_renovacion: e.target.value})} required />
-              </div>
-              <div>
-                <label className="label">Alertar (días antes)</label>
-                <input type="number" min="1" max="30" className="input" value={form.alerta_dias} onChange={e => setForm({...form, alerta_dias: Number(e.target.value)})} />
-              </div>
+              {form.tipo_renovacion !== 'pago_unico' && (
+                <>
+                  <div>
+                    <label className="label">Fecha de renovación *</label>
+                    <input type="date" className="input" value={form.fecha_renovacion} onChange={e => setForm({...form, fecha_renovacion: e.target.value})} required />
+                  </div>
+                  <div>
+                    <label className="label">Alertar (días antes)</label>
+                    <input type="number" min="1" max="30" className="input" value={form.alerta_dias} onChange={e => setForm({...form, alerta_dias: Number(e.target.value)})} />
+                  </div>
+                </>
+              )}
               <div className="col-span-2">
                 <label className="label">Estado</label>
                 <select className="input" value={form.estado} onChange={e => setForm({...form, estado: e.target.value})}>

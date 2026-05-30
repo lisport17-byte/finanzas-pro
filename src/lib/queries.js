@@ -118,6 +118,7 @@ export const serviciosClientes = {
       .from('servicios_clientes')
       .select('*, clientes(nombre, email), tipos_servicio(nombre)')
       .eq('estado', 'activo')
+      .neq('tipo_renovacion', 'pago_unico')
       .lte('fecha_renovacion', limite.toISOString().split('T')[0])
       .gte('fecha_renovacion', hoy.toISOString().split('T')[0])
       .order('fecha_renovacion')
@@ -129,6 +130,7 @@ export const serviciosClientes = {
       .from('servicios_clientes')
       .select('*, clientes(nombre, email), tipos_servicio(nombre)')
       .eq('estado', 'activo')
+      .neq('tipo_renovacion', 'pago_unico')
       .lt('fecha_renovacion', hoy)
       .order('fecha_renovacion')
   },
