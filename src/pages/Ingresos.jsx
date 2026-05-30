@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ingresos as db } from '../lib/queries'
+import { ingresos as db, clientes as dbClientes } from '../lib/queries'
 import useStore from '../store/useStore'
 import Modal from '../components/Modal'
 import { Plus, Search, Trash2, TrendingUp } from 'lucide-react'
@@ -24,11 +24,16 @@ export default function Ingresos() {
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(FORM_INICIAL)
   const [guardando, setGuardando] = useState(false)
-  const { addToast, clientes, user } = useStore()
+  const [clientesLista, setClientesLista] = useState([])
+  const { addToast, user } = useStore()
 
   const cargar = async () => {
-    const { data } = await db.obtenerPorMes(mes, anio)
+    const [{ data }, { data: cls }] = await Promise.all([
+      db.obtenerPorMes(mes, anio),
+      dbClientes.obtenerTodos(),
+    ])
     setLista(data || [])
+    setClientesLista(cls || [])
   }
 
   useEffect(() => { cargar() }, [mes, anio])
@@ -176,7 +181,7 @@ export default function Ingresos() {
               <label className="label">Cliente</label>
               <select className="input" value={form.cliente_id} onChange={e => setForm({...form, cliente_id: e.target.value})}>
                 <option value="">— Sin cliente específico —</option>
-                {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                {clientesLista.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
               </select>
             </div>
             <div>

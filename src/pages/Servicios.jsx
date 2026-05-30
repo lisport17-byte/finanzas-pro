@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { serviciosClientes as db, tiposServicio as dbTipos } from '../lib/queries'
+import { serviciosClientes as db, tiposServicio as dbTipos, clientes as dbClientes } from '../lib/queries'
 import useStore from '../store/useStore'
 import Modal from '../components/Modal'
 import { Plus, Search, Edit2, Trash2, PauseCircle, PlayCircle, Calendar, RefreshCw } from 'lucide-react'
@@ -41,20 +41,23 @@ function diasRestantes(fecha, estado, tipo) {
 export default function Servicios() {
   const [lista, setLista] = useState([])
   const [tipos, setTipos] = useState([])
+  const [clientesLista, setClientesLista] = useState([])
   const [filtro, setFiltro] = useState('')
   const [modal, setModal] = useState(null)
   const [seleccionado, setSeleccionado] = useState(null)
   const [form, setForm] = useState(FORM_INICIAL)
   const [guardando, setGuardando] = useState(false)
-  const { addToast, clientes, user } = useStore()
+  const { addToast, user } = useStore()
 
   const cargar = async () => {
-    const [{ data: svcs }, { data: tps }] = await Promise.all([
+    const [{ data: svcs }, { data: tps }, { data: cls }] = await Promise.all([
       db.obtenerTodos(),
       dbTipos.obtenerTodos(),
+      dbClientes.obtenerTodos(),
     ])
     setLista(svcs || [])
     setTipos(tps || [])
+    setClientesLista(cls || [])
   }
 
   useEffect(() => { cargar() }, [])
@@ -251,7 +254,7 @@ export default function Servicios() {
                 <label className="label">Cliente *</label>
                 <select className="input" value={form.cliente_id} onChange={e => setForm({...form, cliente_id: e.target.value})} required>
                   <option value="">— Selecciona un cliente —</option>
-                  {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  {clientesLista.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                 </select>
               </div>
               <div>
