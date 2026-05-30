@@ -49,20 +49,20 @@ export default function Clientes() {
   const guardar = async (e) => {
     e.preventDefault()
     setGuardando(true)
-    const datos = { ...form, user_id: user.id }
-
-    let error
-    if (modal === 'crear') {
-      ({ error } = await db.crear(datos))
-    } else {
-      ({ error } = await db.actualizar(seleccionado.id, form))
+    try {
+      const datos = { ...form, user_id: user.id }
+      const { error } = modal === 'crear'
+        ? await db.crear(datos)
+        : await db.actualizar(seleccionado.id, form)
+      if (error) { addToast('Error al guardar: ' + error.message, 'error'); return }
+      addToast(modal === 'crear' ? 'Cliente creado ✓' : 'Cliente actualizado ✓', 'success')
+      cerrar()
+      cargar()
+    } catch (err) {
+      addToast('Error de conexión: ' + (err?.message || 'Inténtalo de nuevo'), 'error')
+    } finally {
+      setGuardando(false)
     }
-
-    setGuardando(false)
-    if (error) { addToast('Error al guardar: ' + error.message, 'error'); return }
-    addToast(modal === 'crear' ? 'Cliente creado ✓' : 'Cliente actualizado ✓', 'success')
-    cerrar()
-    cargar()
   }
 
   const eliminar = async (c) => {

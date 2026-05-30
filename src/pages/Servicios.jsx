@@ -94,17 +94,19 @@ export default function Servicios() {
   const guardar = async (e) => {
     e.preventDefault()
     setGuardando(true)
-    const datos = { ...form, precio: Number(form.precio), user_id: user.id }
-    let error
-    if (modal === 'crear') {
-      ({ error } = await db.crear(datos))
-    } else {
-      ({ error } = await db.actualizar(seleccionado.id, { ...form, precio: Number(form.precio) }))
+    try {
+      const datos = { ...form, precio: Number(form.precio), user_id: user.id }
+      const { error } = modal === 'crear'
+        ? await db.crear(datos)
+        : await db.actualizar(seleccionado.id, { ...form, precio: Number(form.precio) })
+      if (error) { addToast('Error: ' + error.message, 'error'); return }
+      addToast(modal === 'crear' ? 'Servicio registrado ✓' : 'Servicio actualizado ✓', 'success')
+      cerrar(); cargar()
+    } catch (err) {
+      addToast('Error de conexión: ' + (err?.message || 'Inténtalo de nuevo'), 'error')
+    } finally {
+      setGuardando(false)
     }
-    setGuardando(false)
-    if (error) { addToast('Error: ' + error.message, 'error'); return }
-    addToast(modal === 'crear' ? 'Servicio registrado ✓' : 'Servicio actualizado ✓', 'success')
-    cerrar(); cargar()
   }
 
   const suspender = async (s) => {

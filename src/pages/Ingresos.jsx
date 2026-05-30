@@ -44,18 +44,23 @@ export default function Ingresos() {
   const guardar = async (e) => {
     e.preventDefault()
     setGuardando(true)
-    const datos = {
-      ...form,
-      monto: Number(form.monto),
-      tasa_cambio: form.tasa_cambio ? Number(form.tasa_cambio) : null,
-      monto_usd: form.moneda === 'USD' ? Number(form.monto) : (form.monto_usd ? Number(form.monto_usd) : null),
-      user_id: user.id,
+    try {
+      const datos = {
+        ...form,
+        monto: Number(form.monto),
+        tasa_cambio: form.tasa_cambio ? Number(form.tasa_cambio) : null,
+        monto_usd: form.moneda === 'USD' ? Number(form.monto) : (form.monto_usd ? Number(form.monto_usd) : null),
+        user_id: user.id,
+      }
+      const { error } = await db.crear(datos)
+      if (error) { addToast('Error: ' + error.message, 'error'); return }
+      addToast('Ingreso registrado ✓', 'success')
+      setModal(false); setForm(FORM_INICIAL); cargar()
+    } catch (err) {
+      addToast('Error de conexión: ' + (err?.message || 'Inténtalo de nuevo'), 'error')
+    } finally {
+      setGuardando(false)
     }
-    const { error } = await db.crear(datos)
-    setGuardando(false)
-    if (error) { addToast('Error: ' + error.message, 'error'); return }
-    addToast('Ingreso registrado ✓', 'success')
-    setModal(false); setForm(FORM_INICIAL); cargar()
   }
 
   const eliminar = async (item) => {

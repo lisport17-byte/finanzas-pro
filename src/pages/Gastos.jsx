@@ -44,11 +44,16 @@ export default function Gastos() {
   const guardar = async (e) => {
     e.preventDefault()
     setGuardando(true)
-    const { error } = await db.crear({ ...form, monto: Number(form.monto), mes, anio, user_id: user.id })
-    setGuardando(false)
-    if (error) { addToast('Error: ' + error.message, 'error'); return }
-    addToast('Gasto registrado ✓', 'success')
-    setModal(false); setForm(FORM_INICIAL); cargar()
+    try {
+      const { error } = await db.crear({ ...form, monto: Number(form.monto), mes, anio, user_id: user.id })
+      if (error) { addToast('Error: ' + error.message, 'error'); return }
+      addToast('Gasto registrado ✓', 'success')
+      setModal(false); setForm(FORM_INICIAL); cargar()
+    } catch (err) {
+      addToast('Error de conexión: ' + (err?.message || 'Inténtalo de nuevo'), 'error')
+    } finally {
+      setGuardando(false)
+    }
   }
 
   const marcarPagado = async (g) => {

@@ -44,13 +44,16 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
         runtimeCaching: [
           {
+            // Solo cachear GET de Supabase (lecturas). Nunca POST/PATCH/DELETE.
             urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
             handler: 'NetworkFirst',
+            method: 'GET',
             options: {
               cacheName: 'supabase-cache',
+              networkTimeoutSeconds: 10,
               expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 60 * 24 // 24 horas
+                maxEntries: 50,
+                maxAgeSeconds: 60 * 5 // 5 minutos (datos frescos)
               }
             }
           }

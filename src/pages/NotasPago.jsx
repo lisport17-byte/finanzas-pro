@@ -40,13 +40,18 @@ export default function NotasPago() {
   const guardar = async (e) => {
     e.preventDefault()
     setGuardando(true)
-    const { error } = await db.crear({ ...form, monto: Number(form.monto), user_id: user.id })
-    setGuardando(false)
-    if (error) { addToast('Error: ' + error.message, 'error'); return }
-    addToast('Nota de pago creada ✓', 'success')
-    setModal(false)
-    setForm(FORM_INICIAL)
-    cargar()
+    try {
+      const { error } = await db.crear({ ...form, monto: Number(form.monto), user_id: user.id })
+      if (error) { addToast('Error: ' + error.message, 'error'); return }
+      addToast('Nota de pago creada ✓', 'success')
+      setModal(false)
+      setForm(FORM_INICIAL)
+      cargar()
+    } catch (err) {
+      addToast('Error de conexión: ' + (err?.message || 'Inténtalo de nuevo'), 'error')
+    } finally {
+      setGuardando(false)
+    }
   }
 
   const marcarPagada = async (n) => {
