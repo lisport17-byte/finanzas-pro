@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { ingresos as db, clientes as dbClientes } from '../lib/queries'
 import useStore from '../store/useStore'
 import Modal from '../components/Modal'
-import { Plus, Search, Trash2, TrendingUp } from 'lucide-react'
+import { descargarCSV } from '../lib/export'
+import { Plus, Search, Trash2, TrendingUp, Download } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -79,6 +80,21 @@ export default function Ingresos() {
     `${i.clientes?.nombre} ${i.concepto} ${i.referencia}`.toLowerCase().includes(filtro.toLowerCase())
   )
 
+  const exportarCSV = () => {
+    if (lista.length === 0) { addToast('No hay ingresos para exportar', 'warning'); return }
+    descargarCSV(
+      `ingresos-${anio}-${String(mes).padStart(2, '0')}`,
+      ['Fecha', 'Cliente', 'Concepto', 'Monto', 'Moneda', 'Tasa BCV', 'Equivalente USD', 'Método', 'Referencia', 'Notas'],
+      lista.map(i => [
+        i.fecha_pago, i.clientes?.nombre || '', i.concepto,
+        Number(i.monto).toFixed(2), i.moneda,
+        i.tasa_cambio || '', i.monto_usd ? Number(i.monto_usd).toFixed(2) : '',
+        i.metodo_pago, i.referencia || '', i.notas || '',
+      ])
+    )
+    addToast('Ingresos exportados a CSV ✓', 'success')
+  }
+
   const totalUSD = filtrados.reduce((s, i) =>
     s + (i.moneda === 'USD' ? Number(i.monto) : Number(i.monto_usd || 0)), 0)
 
@@ -101,9 +117,14 @@ export default function Ingresos() {
             )}
           </select>
         </div>
-        <button onClick={() => { setForm(FORM_INICIAL); setModal(true) }} className="btn-primary whitespace-nowrap">
-          <Plus className="w-4 h-4" /> Registrar Ingreso
-        </button>
+        <div className="flex gap-2">
+          <button onClick={exportarCSV} className="btn-secondary whitespace-nowrap" title="Exportar a Excel/CSV">
+            <Download className="w-4 h-4" /> CSV
+          </button>
+          <button onClick={() => { setForm(FORM_INICIAL); setModal(true) }} className="btn-primary whitespace-nowrap">
+            <Plus className="w-4 h-4" /> Registrar Ingreso
+          </button>
+        </div>
       </div>
 
       {/* Resumen del mes */}

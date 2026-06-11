@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { gastos as db } from '../lib/queries'
 import useStore from '../store/useStore'
 import Modal from '../components/Modal'
-import { Plus, CheckCircle, Trash2, RefreshCw, TrendingDown, Copy } from 'lucide-react'
+import { descargarCSV } from '../lib/export'
+import { Plus, CheckCircle, Trash2, RefreshCw, Copy, Download } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -92,7 +93,19 @@ export default function Gastos() {
     valor: i + 1, nombre: format(new Date(2024, i, 1), 'MMMM', { locale: es })
   }))
 
-  const porCategoria = CATEGORIAS.filter(c => lista.some(g => g.categoria === c))
+  const exportarCSV = () => {
+    if (lista.length === 0) { addToast('No hay gastos para exportar', 'warning'); return }
+    descargarCSV(
+      `gastos-${anio}-${String(mes).padStart(2, '0')}`,
+      ['Gasto', 'Categoría', 'Proveedor', 'Monto', 'Moneda', 'Día vence', 'Recurrente', 'Estado', 'Notas'],
+      lista.map(g => [
+        g.nombre, g.categoria, g.proveedor || '',
+        Number(g.monto).toFixed(2), g.moneda,
+        g.dia_vence || '', g.es_recurrente ? 'Sí' : 'No', g.estado, g.notas || '',
+      ])
+    )
+    addToast('Gastos exportados a CSV ✓', 'success')
+  }
 
   return (
     <div className="space-y-4">
@@ -108,7 +121,10 @@ export default function Gastos() {
             )}
           </select>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={exportarCSV} className="btn-secondary" title="Exportar a Excel/CSV">
+            <Download className="w-4 h-4" /> CSV
+          </button>
           <button onClick={clonarMes} disabled={clonando} className="btn-secondary">
             {clonando ? <div className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" /> : <Copy className="w-4 h-4" />}
             Clonar del mes anterior
@@ -166,7 +182,7 @@ export default function Gastos() {
               {lista.length === 0 ? (
                 <tr><td colSpan={6} className="table-cell text-center text-slate-500 py-10">
                   No hay gastos registrados para este mes.<br/>
-                  <span className="text-xs">Usa "Clonar del mes anterior" si tienes gastos recurrentes</span>
+                  <span className="text-xs">Usa &quot;Clonar del mes anterior&quot; si tienes gastos recurrentes</span>
                 </td></tr>
               ) : lista.map((g) => (
                 <tr key={g.id} className="table-row">

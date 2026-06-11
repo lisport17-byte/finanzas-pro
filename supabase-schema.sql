@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS public.servicios_clientes (
   descripcion       TEXT,
   precio            DECIMAL(10,2) NOT NULL DEFAULT 0,
   moneda            TEXT DEFAULT 'USD' CHECK (moneda IN ('USD', 'BS')),
-  tipo_renovacion   TEXT NOT NULL DEFAULT 'mensual' CHECK (tipo_renovacion IN ('mensual', 'anual')),
+  tipo_renovacion   TEXT NOT NULL DEFAULT 'mensual' CHECK (tipo_renovacion IN ('mensual', 'anual', 'pago_unico')),
   fecha_inicio      DATE NOT NULL DEFAULT CURRENT_DATE,
   fecha_renovacion  DATE NOT NULL,
   estado            TEXT DEFAULT 'activo' CHECK (estado IN ('activo', 'suspendido', 'cancelado')),
@@ -218,6 +218,14 @@ SELECT
 FROM public.ingresos
 WHERE user_id = auth.uid()
 GROUP BY 1, 2;
+
+-- =====================================================
+-- MIGRACIÓN (solo si ya tenías el schema viejo instalado):
+-- permite el tipo de renovación 'pago_unico'
+-- =====================================================
+-- ALTER TABLE public.servicios_clientes DROP CONSTRAINT servicios_clientes_tipo_renovacion_check;
+-- ALTER TABLE public.servicios_clientes ADD CONSTRAINT servicios_clientes_tipo_renovacion_check
+--   CHECK (tipo_renovacion IN ('mensual', 'anual', 'pago_unico'));
 
 -- =====================================================
 -- FIN DEL SCHEMA

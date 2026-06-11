@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { notasPago as db, clientes as dbClientes } from '../lib/queries'
 import useStore from '../store/useStore'
 import Modal from '../components/Modal'
-import { Plus, Search, CheckCircle, Trash2, FileText, Clock } from 'lucide-react'
+import { imprimirNotaPago } from '../lib/pdf'
+import { Plus, Search, CheckCircle, Trash2, FileText, Clock, Printer } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -164,6 +165,16 @@ export default function NotasPago() {
                   </td>
                   <td className="table-cell">
                     <div className="flex items-center justify-end gap-1">
+                      <button
+                        onClick={() => {
+                          const ok = imprimirNotaPago(n, user?.email)
+                          if (!ok) addToast('Permite las ventanas emergentes para imprimir', 'warning')
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-brand-300 hover:bg-brand-500/10 rounded-lg"
+                        title="Imprimir / Guardar PDF"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                      </button>
                       {n.estado !== 'pagada' && n.estado !== 'anulada' && (
                         <button onClick={() => marcarPagada(n)} className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-900/30 rounded-lg" title="Marcar pagada">
                           <CheckCircle className="w-3.5 h-3.5" />

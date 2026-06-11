@@ -17,6 +17,7 @@ import Ingresos from './pages/Ingresos'
 import Gastos from './pages/Gastos'
 import NotasPago from './pages/NotasPago'
 import Alertas from './pages/Alertas'
+import Reportes from './pages/Reportes'
 
 function ProtectedRoute({ children }) {
   const user = useStore((s) => s.user)
@@ -65,9 +66,12 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-[100dvh] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4 animate-fade-in">
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-glow-indigo animate-pulse"
+               style={{ backgroundImage: 'linear-gradient(135deg, #6366f1, #4338ca)' }}>
+            <span className="text-white font-bold text-xl">F</span>
+          </div>
           <p className="text-slate-400 text-sm">Cargando FinanzasPro...</p>
         </div>
       </div>
@@ -99,6 +103,7 @@ export default function App() {
           <Route path="ingresos" element={<Ingresos />} />
           <Route path="gastos" element={<Gastos />} />
           <Route path="cobros" element={<NotasPago />} />
+          <Route path="reportes" element={<Reportes />} />
           <Route path="alertas" element={<Alertas />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

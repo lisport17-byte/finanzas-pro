@@ -300,6 +300,126 @@ export const gastos = {
   },
 }
 
+// ─── REPORTES / ANALÍTICA ─────────────────────────────────────────────────────
+
+const aUSD = (r) => (r.moneda === 'USD' ? Number(r.monto) : Number(r.monto_usd || 0))
+
+export const reportes = {
+  /**
+   * Serie mensual de ingresos vs gastos (en USD) para los últimos N meses.
+   * Devuelve [{ anio, mes, ingresos, gastos, utilidad }]
+   */
+  serieMensual: async (meses = 12) => {
+    const hoy = new Date()
+    const inicio = new Date(hoy.getFullYear(), hoy.getMonth() - (meses - 1), 1)
+    const inicioISO = inicio.toISOString().split('T')[0]
+
+    const [{ data: ing }, { data: gas }] = await Promise.all([
+      supabase.from('ingresos')
+        .select('fecha_pago, monto, moneda, monto_usd')
+        .gte('fecha_pago', inicioISO),
+      supabase.from('gastos')
+        .select('mes, anio, monto, moneda'),
+    ])
+
+    const serie = []
+    for (let i = 0; i < meses; i++) {
+      const f = new Date(inicio.getFullYear(), inicio.getMonth() + i, 1)
+      serie.push({ anio: f.getFullYear(), mes: f.getMonth() + 1, ingresos: 0, gastos: 0 })
+    }
+    const buscar = (anio, mes) => serie.find((s) => s.anio === anio && s.mes === mes)
+
+    for (const r of ing || []) {
+      const f = new Date(r.fecha_pago + 'T00:00:00')
+      const punto = buscar(f.getFullYear(), f.getMonth() + 1)
+      if (punto) punto.ingresos += aUSD(r)
+    }
+    for (const g of gas || []) {
+      const punto = buscar(g.anio, g.mes)
+      if (punto) punto.gastos += Number(g.monto)
+    }
+    return serie.map((s) => ({ ...s, utilidad: s.ingresos - s.gastos }))
+  },
+
+  /** Serie de los 12 meses de un año específico (libro mayor) */
+  serieAnio: async (anio) => {
+    const [{ data: ing }, { data: gas }] = await Promise.all([
+      supabase.from('ingresos')
+        .select('fecha_pago, monto, moneda, monto_usd')
+        .gte('fecha_pago', `${anio}-01-01`)
+        .lte('fecha_pago', `${anio}-12-31`),
+      supabase.from('gastos')
+        .select('mes, monto')
+        .eq('anio', anio),
+    ])
+
+    const serie = Array.from({ length: 12 }, (_, i) => ({ anio, mes: i + 1, ingresos: 0, gastos: 0 }))
+    for (const r of ing || []) {
+      const mes = Number(r.fecha_pago.split('-')[1])
+      serie[mes - 1].ingresos += aUSD(r)
+    }
+    for (const g of gas || []) {
+      if (g.mes >= 1 && g.mes <= 12) serie[g.mes - 1].gastos += Number(g.monto)
+    }
+    return serie.map((s) => ({ ...s, utilidad: s.ingresos - s.gastos }))
+  },
+
+  /** Gastos del mes agrupados por categoría: [{ categoria, total }] */
+  gastosPorCategoria: async (mes, anio) => {
+    const { data } = await supabase
+      .from('gastos')
+      .select('categoria, monto')
+      .eq('mes', mes)
+      .eq('anio', anio)
+    const mapa = {}
+    for (const g of data || []) {
+      mapa[g.categoria] = (mapa[g.categoria] || 0) + Number(g.monto)
+    }
+    return Object.entries(mapa)
+      .map(([categoria, total]) => ({ categoria, total }))
+      .sort((a, b) => b.total - a.total)
+  },
+
+  /** Top clientes por ingresos (USD) de los últimos N meses */
+  topClientes: async (meses = 12, limite = 5) => {
+    const inicio = new Date()
+    inicio.setMonth(inicio.getMonth() - meses)
+    const { data } = await supabase
+      .from('ingresos')
+      .select('monto, moneda, monto_usd, clientes(nombre)')
+      .gte('fecha_pago', inicio.toISOString().split('T')[0])
+    const mapa = {}
+    for (const r of data || []) {
+      const nombre = r.clientes?.nombre || 'Sin cliente'
+      mapa[nombre] = (mapa[nombre] || 0) + aUSD(r)
+    }
+    return Object.entries(mapa)
+      .map(([nombre, total]) => ({ nombre, total }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, limite)
+  },
+
+  /**
+   * Ingreso recurrente mensual (MRR) proyectado de servicios activos en USD:
+   * mensual = precio, anual = precio / 12. Pago único no cuenta.
+   */
+  mrr: async () => {
+    const { data } = await supabase
+      .from('servicios_clientes')
+      .select('precio, moneda, tipo_renovacion')
+      .eq('estado', 'activo')
+      .neq('tipo_renovacion', 'pago_unico')
+    let total = 0
+    let activos = 0
+    for (const s of data || []) {
+      if (s.moneda !== 'USD') continue
+      activos++
+      total += s.tipo_renovacion === 'anual' ? Number(s.precio) / 12 : Number(s.precio)
+    }
+    return { mrr: total, serviciosActivos: (data || []).length, serviciosUSD: activos }
+  },
+}
+
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 
 export async function obtenerResumenDashboard() {

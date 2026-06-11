@@ -18,26 +18,39 @@ Sistema de control financiero empresarial PWA (Progressive Web App). Permite ges
 src/
 ├── lib/
 │   ├── supabase.js      # Cliente Supabase (usa .env)
-│   └── queries.js       # Todas las funciones de BD
+│   ├── queries.js       # Todas las funciones de BD (incluye `reportes` para analítica)
+│   ├── format.js        # fmtUSD, fmtMonto, nombres de meses
+│   ├── export.js        # descargarCSV() — exportación compatible con Excel
+│   └── pdf.js           # imprimirNotaPago() — recibos imprimibles/PDF sin dependencias
 ├── store/
 │   └── useStore.js      # Estado global con Zustand
 ├── components/
-│   ├── Layout.jsx       # Contenedor principal con sidebar
+│   ├── Layout.jsx       # Contenedor principal con sidebar + bottom nav
 │   ├── Sidebar.jsx      # Navegación lateral
 │   ├── Header.jsx       # Barra superior
-│   ├── Modal.jsx        # Modal reutilizable
+│   ├── BottomNav.jsx    # Navegación inferior móvil (estilo app nativa)
+│   ├── Modal.jsx        # Modal reutilizable (bottom sheet en móvil)
 │   └── Toast.jsx        # Notificaciones
 ├── pages/
-│   ├── Login.jsx        # Autenticación
-│   ├── Dashboard.jsx    # Resumen financiero
+│   ├── Login.jsx        # Autenticación (split-screen con panel de marca)
+│   ├── Dashboard.jsx    # Resumen financiero con gráficas (recharts)
 │   ├── Clientes.jsx     # CRUD de clientes
 │   ├── Servicios.jsx    # Servicios por cliente + renovaciones
-│   ├── NotasPago.jsx    # Cuentas por cobrar
-│   ├── Ingresos.jsx     # Registro de pagos recibidos
-│   ├── Gastos.jsx       # Libro de gastos mensuales
+│   ├── NotasPago.jsx    # Cuentas por cobrar + recibo imprimible
+│   ├── Ingresos.jsx     # Registro de pagos recibidos + export CSV
+│   ├── Gastos.jsx       # Libro de gastos mensuales + export CSV
+│   ├── Reportes.jsx     # Libro mayor anual con gráficas + export CSV
 │   └── Alertas.jsx      # Servicios vencidos y por vencer
-└── index.css            # Clases de Tailwind personalizadas
+└── index.css            # Sistema de diseño (clases utilitarias Tailwind)
 ```
+
+## Sistema de diseño (v2)
+- Tipografías: Inter (texto), Sora (`font-display`, títulos), JetBrains Mono (montos)
+- Paleta de fondo `ink-*` (azul profundo) definida en `tailwind.config.js`; acentos `brand-*` (indigo)
+- Clases compartidas en `index.css`: `card`, `card-hover`, `glass`, `btn-primary/secondary/danger/success/ghost`, `input`, `label`, `badge-*`, `table-*`, `skeleton`, `text-gradient`
+- Animaciones: `animate-fade-up`, `animate-fade-in`, `animate-scale-in`, `animate-slide-in-right`
+- Gráficas con **recharts** (chunk separado `charts` en el build)
+- Montos siempre con `fmtUSD`/`fmtMonto` de `src/lib/format.js`
 
 ## Variables de entorno requeridas
 ```bash
@@ -81,15 +94,20 @@ npm run preview  # Preview del build
 - La función `obtenerProximosVencer(dias)` y `obtenerVencidos()` alimentan las Alertas
 - El badge del sidebar muestra el conteo de alertas activas
 
+## Funcionalidades implementadas en v2
+- ✅ Recibos imprimibles/PDF de notas de pago (`src/lib/pdf.js`)
+- ✅ Libro mayor anual con gráficas y acumulado (página Reportes)
+- ✅ Dashboard con gráficas: flujo de caja 12 meses, gastos por categoría, top clientes, MRR
+- ✅ Exportar a CSV/Excel: ingresos, gastos y libro mayor
+- ✅ Navegación inferior móvil + modales tipo bottom sheet
+
 ## Próximas funcionalidades a implementar
-1. **Exportar a PDF**: Notas de pago y estados de cuenta por cliente
-2. **Libro mayor**: Vista consolidada mes a mes con gráficas
-3. **WhatsApp bot**: Notificaciones automáticas a clientes sobre vencimientos
-4. **Multi-moneda**: Soporte para otras monedas (EUR, COP, etc.)
-5. **Dashboard con gráficas**: Chart.js para tendencias de ingresos/gastos
-6. **Backup automático**: Exportar datos a CSV/Excel
-7. **Modo offline**: Caché completo con Service Worker
-8. **Email reminders**: Avisos automáticos vía Supabase Edge Functions
+1. **Estado de cuenta por cliente**: PDF con historial de servicios, notas e ingresos
+2. **WhatsApp bot**: Notificaciones automáticas a clientes sobre vencimientos
+3. **Multi-moneda**: Soporte para otras monedas (EUR, COP, etc.)
+4. **Modo offline**: Caché completo con Service Worker
+5. **Email reminders**: Avisos automáticos vía Supabase Edge Functions
+6. **Renovación en un clic**: botón que extiende fecha_renovacion y crea la nota de cobro
 
 ## Seguridad
 - Row Level Security (RLS) activo en Supabase — datos completamente aislados por usuario

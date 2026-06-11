@@ -17,7 +17,7 @@ const colores = {
 export default function Toast({ toast, onClose }) {
   const tipo = toast.tipo || 'info'
   return (
-    <div className={`flex items-start gap-3 p-3 rounded-lg border ${colores[tipo]} backdrop-blur-sm shadow-lg animate-in slide-in-from-right`}>
+    <div className={`flex items-start gap-3 p-3.5 rounded-xl border ${colores[tipo]} backdrop-blur-xl shadow-2xl animate-slide-in-right`}>
       {iconos[tipo]}
       <p className="text-sm text-slate-200 flex-1">{toast.mensaje}</p>
       <button onClick={onClose} className="text-slate-500 hover:text-slate-300">

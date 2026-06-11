@@ -16,8 +16,8 @@ export default defineConfig({
         name: 'FinanzasPro - Control Empresarial',
         short_name: 'FinanzasPro',
         description: 'Sistema de control financiero empresarial',
-        theme_color: '#1e293b',
-        background_color: '#0f172a',
+        theme_color: '#080b14',
+        background_color: '#080b14',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '.',
@@ -67,5 +67,16 @@ export default defineConfig({
     alias: {
       '@': '/src'
     }
-  }
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router-dom'],
+          charts: ['recharts'],
+          supabase: ['@supabase/supabase-js'],
+        },
+      },
+    },
+  },
 })

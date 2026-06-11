@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { serviciosClientes as db, tiposServicio as dbTipos, clientes as dbClientes } from '../lib/queries'
 import useStore from '../store/useStore'
 import Modal from '../components/Modal'
-import { Plus, Search, Edit2, Trash2, PauseCircle, PlayCircle, Calendar, RefreshCw } from 'lucide-react'
+import { Plus, Search, Edit2, Trash2, PauseCircle, PlayCircle, Calendar } from 'lucide-react'
 import { format, addMonths, addYears, differenceInDays } from 'date-fns'
 import { es } from 'date-fns/locale'
 
