@@ -50,8 +50,13 @@ export default function Reportes() {
     reportes.serieAnio(anio).then((s) => {
       setSerie(s)
       setCargando(false)
+    }).catch((err) => {
+      console.error('Error cargando reportes:', err)
+      addToast('No se pudieron cargar los reportes: ' + (err?.message || 'revisa tu conexión'), 'error')
+      setSerie([])
+      setCargando(false)
     })
-  }, [anio])
+  }, [anio, addToast])
 
   const totalIngresos = serie.reduce((s, m) => s + m.ingresos, 0)
   const totalGastos = serie.reduce((s, m) => s + m.gastos, 0)

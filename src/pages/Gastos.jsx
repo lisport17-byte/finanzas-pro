@@ -36,8 +36,12 @@ export default function Gastos() {
   const { addToast, user } = useStore()
 
   const cargar = async () => {
-    const { data } = await db.obtenerPorMes(mes, anio)
-    setLista(data || [])
+    try {
+      const { data } = await db.obtenerPorMes(mes, anio)
+      setLista(data || [])
+    } catch (err) {
+      addToast('No se pudieron cargar los gastos: ' + (err?.message || 'revisa tu conexión'), 'error')
+    }
   }
 
   useEffect(() => { cargar() }, [mes, anio])

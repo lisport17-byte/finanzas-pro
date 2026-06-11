@@ -29,12 +29,16 @@ export default function Ingresos() {
   const { addToast, user } = useStore()
 
   const cargar = async () => {
-    const [{ data }, { data: cls }] = await Promise.all([
-      db.obtenerPorMes(mes, anio),
-      dbClientes.obtenerTodos(),
-    ])
-    setLista(data || [])
-    setClientesLista(cls || [])
+    try {
+      const [{ data }, { data: cls }] = await Promise.all([
+        db.obtenerPorMes(mes, anio),
+        dbClientes.obtenerTodos(),
+      ])
+      setLista(data || [])
+      setClientesLista(cls || [])
+    } catch (err) {
+      addToast('No se pudieron cargar los ingresos: ' + (err?.message || 'revisa tu conexión'), 'error')
+    }
   }
 
   useEffect(() => { cargar() }, [mes, anio])

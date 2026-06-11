@@ -50,14 +50,18 @@ export default function Servicios() {
   const { addToast, user } = useStore()
 
   const cargar = async () => {
-    const [{ data: svcs }, { data: tps }, { data: cls }] = await Promise.all([
-      db.obtenerTodos(),
-      dbTipos.obtenerTodos(),
-      dbClientes.obtenerTodos(),
-    ])
-    setLista(svcs || [])
-    setTipos(tps || [])
-    setClientesLista(cls || [])
+    try {
+      const [{ data: svcs }, { data: tps }, { data: cls }] = await Promise.all([
+        db.obtenerTodos(),
+        dbTipos.obtenerTodos(),
+        dbClientes.obtenerTodos(),
+      ])
+      setLista(svcs || [])
+      setTipos(tps || [])
+      setClientesLista(cls || [])
+    } catch (err) {
+      addToast('No se pudieron cargar los servicios: ' + (err?.message || 'revisa tu conexión'), 'error')
+    }
   }
 
   useEffect(() => { cargar() }, [])

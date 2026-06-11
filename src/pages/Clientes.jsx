@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { clientes as db } from '../lib/queries'
+import { clientes as db, serviciosClientes as dbServicios, notasPago as dbNotas, ingresos as dbIngresos } from '../lib/queries'
 import useStore from '../store/useStore'
 import Modal from '../components/Modal'
-import { Plus, Search, Edit2, Trash2, UserCheck, UserX, Phone, Mail, Building } from 'lucide-react'
+import { imprimirEstadoCuenta, abrirVentanaImpresion } from '../lib/pdf'
+import { Plus, Search, Edit2, Trash2, UserCheck, UserX, Phone, Mail, Building, FileText } from 'lucide-react'
 
 const ESTADO_BADGE = {
   activo:     'badge-active',
@@ -24,9 +25,32 @@ export default function Clientes() {
   const { addToast, setClientes, user } = useStore()
 
   const cargar = async () => {
-    const { data } = await db.obtenerTodos()
-    setLista(data || [])
-    setClientes(data || [])
+    try {
+      const { data } = await db.obtenerTodos()
+      setLista(data || [])
+      setClientes(data || [])
+    } catch (err) {
+      addToast('No se pudieron cargar los clientes: ' + (err?.message || 'revisa tu conexión'), 'error')
+    }
+  }
+
+  const estadoCuenta = async (c) => {
+    // Abrir la ventana ANTES de los await — los navegadores bloquean
+    // popups que no son respuesta directa al clic del usuario
+    const win = abrirVentanaImpresion()
+    if (!win) { addToast('Permite las ventanas emergentes para imprimir', 'warning'); return }
+    win.document.write('<p style="font-family:sans-serif;color:#475569;padding:40px;">Generando estado de cuenta...</p>')
+    try {
+      const [{ data: servicios }, { data: notas }, { data: pagos }] = await Promise.all([
+        dbServicios.obtenerPorCliente(c.id),
+        dbNotas.obtenerPorCliente(c.id),
+        dbIngresos.obtenerPorCliente(c.id),
+      ])
+      imprimirEstadoCuenta(c, servicios || [], notas || [], pagos || [], win)
+    } catch (err) {
+      win.close()
+      addToast('Error al generar: ' + (err?.message || 'inténtalo de nuevo'), 'error')
+    }
   }
 
   useEffect(() => { cargar() }, [])
@@ -178,6 +202,13 @@ export default function Clientes() {
                     </td>
                     <td className="table-cell">
                       <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => estadoCuenta(c)}
+                          className="p-1.5 text-slate-400 hover:text-brand-300 hover:bg-brand-500/10 rounded-lg transition-colors"
+                          title="Estado de cuenta (PDF)"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           onClick={() => abrirEditar(c)}
                           className="p-1.5 text-slate-400 hover:text-indigo-400 hover:bg-indigo-900/30 rounded-lg transition-colors"

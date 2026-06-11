@@ -32,13 +32,17 @@ export default function NotasPago() {
   const { addToast, user } = useStore()
 
   const cargar = async () => {
-    const [, { data }, { data: cls }] = await Promise.all([
-      db.actualizarVencidas(),
-      db.obtenerTodas(),
-      dbClientes.obtenerTodos(),
-    ])
-    setLista(data || [])
-    setClientesLista(cls || [])
+    try {
+      const [, { data }, { data: cls }] = await Promise.all([
+        db.actualizarVencidas(),
+        db.obtenerTodas(),
+        dbClientes.obtenerTodos(),
+      ])
+      setLista(data || [])
+      setClientesLista(cls || [])
+    } catch (err) {
+      addToast('No se pudieron cargar las notas: ' + (err?.message || 'revisa tu conexión'), 'error')
+    }
   }
 
   useEffect(() => { cargar() }, [])

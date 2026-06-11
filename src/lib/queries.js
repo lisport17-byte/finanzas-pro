@@ -181,6 +181,13 @@ export const notasPago = {
     return supabase.from('notas_pago').insert({ ...datos, numero }).select().single()
   },
 
+  obtenerPorCliente: (clienteId) =>
+    supabase
+      .from('notas_pago')
+      .select('*')
+      .eq('cliente_id', clienteId)
+      .order('fecha_emision', { ascending: false }),
+
   actualizar: (id, datos) =>
     supabase.from('notas_pago').update(datos).eq('id', id).select().single(),
 
@@ -221,6 +228,13 @@ export const ingresos = {
       .lte('fecha_pago', fin)
       .order('fecha_pago', { ascending: false })
   },
+
+  obtenerPorCliente: (clienteId) =>
+    supabase
+      .from('ingresos')
+      .select('*')
+      .eq('cliente_id', clienteId)
+      .order('fecha_pago', { ascending: false }),
 
   crear: (datos) =>
     supabase.from('ingresos').insert(datos).select().single(),

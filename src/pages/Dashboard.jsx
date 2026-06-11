@@ -85,9 +85,12 @@ export default function Dashboard() {
   const [topClientes, setTopClientes] = useState([])
   const [mrrInfo, setMrrInfo] = useState(null)
   const [cargando, setCargando] = useState(true)
+  const [error, setError] = useState(null)
   const setAlertasCount = useStore((s) => s.setAlertasCount)
 
-  useEffect(() => {
+  const cargar = () => {
+    setCargando(true)
+    setError(null)
     const hoy = new Date()
     Promise.all([
       obtenerResumenDashboard(),
@@ -103,8 +106,25 @@ export default function Dashboard() {
       setMrrInfo(m)
       setAlertasCount(d.serviciosVencer.length + d.serviciosVencidos.length)
       setCargando(false)
+    }).catch((err) => {
+      console.error('Error cargando dashboard:', err)
+      setError(err?.message || 'No se pudo conectar con la base de datos')
+      setCargando(false)
     })
-  }, [setAlertasCount])
+  }
+
+  useEffect(() => { cargar() }, [setAlertasCount])
+
+  if (error) {
+    return (
+      <div className="card flex flex-col items-center justify-center py-16 text-center max-w-lg mx-auto">
+        <AlertTriangle className="w-12 h-12 text-amber-400 mb-4 opacity-70" />
+        <h3 className="font-display text-lg font-bold text-slate-200">No se pudieron cargar los datos</h3>
+        <p className="text-sm text-slate-500 mt-2 mb-6">{error}</p>
+        <button onClick={cargar} className="btn-primary">Reintentar</button>
+      </div>
+    )
+  }
 
   if (cargando) {
     return (

@@ -42,24 +42,11 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
-        runtimeCaching: [
-          {
-            // Solo cachear peticiones GET de datos (no auth, no mutaciones)
-            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/.*/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'supabase-data-cache',
-              networkTimeoutSeconds: 8,
-              expiration: {
-                maxEntries: 50,
-                maxAgeSeconds: 60 * 2 // 2 minutos
-              },
-              fetchOptions: {
-                credentials: 'include',
-              },
-            }
-          }
-        ]
+        cleanupOutdatedCaches: true,
+        // NO interceptar peticiones a Supabase: el SW con credentials:'include'
+        // rompía CORS (Supabase responde ACAO:*) y añadía 8s de espera por request.
+        // En una app contable los datos deben ir SIEMPRE directo a la red.
+        navigateFallbackDenylist: [/supabase/],
       }
     })
   ],

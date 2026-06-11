@@ -96,18 +96,30 @@ npm run preview  # Preview del build
 
 ## Funcionalidades implementadas en v2
 - ✅ Recibos imprimibles/PDF de notas de pago (`src/lib/pdf.js`)
+- ✅ Estado de cuenta por cliente en PDF (servicios + notas + pagos, botón en Clientes)
+- ✅ Renovación en un clic con nota de cobro automática (página Alertas)
 - ✅ Libro mayor anual con gráficas y acumulado (página Reportes)
 - ✅ Dashboard con gráficas: flujo de caja 12 meses, gastos por categoría, top clientes, MRR
 - ✅ Exportar a CSV/Excel: ingresos, gastos y libro mayor
 - ✅ Navegación inferior móvil + modales tipo bottom sheet
 
+## Lecciones críticas de estabilidad (NO romper)
+1. **Nunca llamar a Supabase con `await` dentro del callback `onAuthStateChange`** — la
+   librería mantiene un lock interno y se produce un deadlock que congela TODAS las
+   consultas (skeletons infinitos, guardados que nunca responden). Usar `setTimeout(fn, 0)`.
+2. **El Service Worker NO debe interceptar/cachear peticiones a Supabase** — con
+   `credentials: 'include'` rompe CORS (Supabase responde `ACAO: *`) y añade segundos de
+   espera. Los datos contables siempre van directo a la red.
+3. El cliente Supabase (`src/lib/supabase.js`) tiene un **fetch con timeout de 20s** para
+   que ninguna operación cuelgue en silencio.
+4. Toda carga de datos lleva `try/catch` con toast de error (y botón Reintentar en Dashboard).
+5. `window.open` para PDFs debe llamarse ANTES de cualquier `await` (popup blockers);
+   usar `abrirVentanaImpresion()` y pasar la ventana a la función de impresión.
+
 ## Próximas funcionalidades a implementar
-1. **Estado de cuenta por cliente**: PDF con historial de servicios, notas e ingresos
-2. **WhatsApp bot**: Notificaciones automáticas a clientes sobre vencimientos
-3. **Multi-moneda**: Soporte para otras monedas (EUR, COP, etc.)
-4. **Modo offline**: Caché completo con Service Worker
-5. **Email reminders**: Avisos automáticos vía Supabase Edge Functions
-6. **Renovación en un clic**: botón que extiende fecha_renovacion y crea la nota de cobro
+1. **WhatsApp bot**: Notificaciones automáticas a clientes sobre vencimientos
+2. **Multi-moneda**: Soporte para otras monedas (EUR, COP, etc.)
+3. **Email reminders**: Avisos automáticos vía Supabase Edge Functions
 
 ## Seguridad
 - Row Level Security (RLS) activo en Supabase — datos completamente aislados por usuario

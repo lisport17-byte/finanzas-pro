@@ -46,14 +46,18 @@ export default function App() {
         setLoading(false)
       })
 
-    // Escuchar cambios de autenticación
+    // Escuchar cambios de autenticación.
+    // IMPORTANTE: nunca hacer await de llamadas a Supabase DENTRO de este callback —
+    // la librería mantiene un lock mientras lo ejecuta y la llamada interna espera
+    // ese mismo lock → deadlock que congela TODAS las consultas de la app.
+    // setTimeout saca la llamada del callback y libera el lock primero.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
         if (session?.user) {
           setUser(session.user)
           // Solo inicializar en el primer login real, no en cada recarga
           if (event === 'SIGNED_IN') {
-            await inicializarDatos(session.user.id)
+            setTimeout(() => { inicializarDatos(session.user.id) }, 0)
           }
         } else {
           setUser(null)

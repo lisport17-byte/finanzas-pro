@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { serviciosClientes as db } from '../lib/queries'
+import { serviciosClientes as db, notasPago as dbNotas } from '../lib/queries'
 import useStore from '../store/useStore'
+import { fmtMonto } from '../lib/format'
 import { AlertTriangle, Clock, PauseCircle, PlayCircle, Bell, CheckCircle } from 'lucide-react'
 import { format, differenceInDays, addMonths, addYears } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -17,18 +18,23 @@ export default function Alertas() {
   const [vencidos, setVencidos] = useState([])
   const [proximos, setProximos] = useState([])
   const [cargando, setCargando] = useState(true)
-  const { addToast, setAlertasCount } = useStore()
+  const { addToast, setAlertasCount, user } = useStore()
 
   const cargar = async () => {
     setCargando(true)
-    const [{ data: venc }, { data: prox }] = await Promise.all([
-      db.obtenerVencidos(),
-      db.obtenerProximosVencer(15),
-    ])
-    setVencidos(venc || [])
-    setProximos(prox || [])
-    setAlertasCount((venc?.length || 0) + (prox?.length || 0))
-    setCargando(false)
+    try {
+      const [{ data: venc }, { data: prox }] = await Promise.all([
+        db.obtenerVencidos(),
+        db.obtenerProximosVencer(15),
+      ])
+      setVencidos(venc || [])
+      setProximos(prox || [])
+      setAlertasCount((venc?.length || 0) + (prox?.length || 0))
+    } catch (err) {
+      addToast('No se pudieron cargar las alertas: ' + (err?.message || 'revisa tu conexión'), 'error')
+    } finally {
+      setCargando(false)
+    }
   }
 
   useEffect(() => { cargar() }, [])
@@ -40,12 +46,39 @@ export default function Alertas() {
   }
 
   const renovar = async (s) => {
-    const base = new Date()
-    const nueva = s.tipo_renovacion === 'mensual' ? addMonths(base, 1) : addYears(base, 1)
-    const nuevaFecha = nueva.toISOString().split('T')[0]
-    await db.reactivar(s.id, nuevaFecha)
-    addToast(`Servicio renovado hasta ${format(nueva, 'dd MMM yyyy', { locale: es })} ✓`, 'success')
-    cargar()
+    try {
+      // Si aún no vence, el nuevo período arranca donde termina el actual
+      // (contablemente correcto); si ya venció, arranca hoy.
+      const vencimiento = new Date(s.fecha_renovacion + 'T00:00:00')
+      const base = vencimiento >= new Date() ? vencimiento : new Date()
+      const nueva = s.tipo_renovacion === 'mensual' ? addMonths(base, 1) : addYears(base, 1)
+      const nuevaFecha = format(nueva, 'yyyy-MM-dd')
+
+      const { error } = await db.reactivar(s.id, nuevaFecha)
+      if (error) { addToast('Error al renovar: ' + error.message, 'error'); return }
+      addToast(`Servicio renovado hasta ${format(nueva, 'dd MMM yyyy', { locale: es })} ✓`, 'success')
+
+      // Nota de cobro automática por la renovación
+      if (Number(s.precio) > 0 &&
+          confirm(`¿Crear nota de cobro por ${fmtMonto(s.precio, s.moneda)} a ${s.clientes?.nombre}?`)) {
+        const { error: errNota } = await dbNotas.crear({
+          cliente_id: s.cliente_id,
+          servicio_cliente_id: s.id,
+          concepto: `Renovación ${s.tipo_renovacion} — ${s.nombre_servicio}`,
+          monto: Number(s.precio),
+          moneda: s.moneda,
+          fecha_emision: format(new Date(), 'yyyy-MM-dd'),
+          fecha_vencimiento: nuevaFecha,
+          estado: 'pendiente',
+          user_id: user.id,
+        })
+        if (errNota) addToast('Servicio renovado, pero falló la nota: ' + errNota.message, 'warning')
+        else addToast('Nota de cobro creada — revísala en Cuentas x Cobrar ✓', 'success')
+      }
+      cargar()
+    } catch (err) {
+      addToast('Error de conexión: ' + (err?.message || 'inténtalo de nuevo'), 'error')
+    }
   }
 
   const ServiceCard = ({ s, esVencido }) => {
