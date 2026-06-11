@@ -88,6 +88,19 @@ npm run preview  # Preview del build
 - Las páginas manejan su propio estado local + llaman a `queries.js`
 - Nunca hardcodear `user_id` — siempre tomarlo de `useStore().user.id`
 
+## Facturación automática (ciclo de cobro recurrente)
+- Al abrir la app, `facturacion.generarNotasRenovacion(userId, 7)` (disparada una vez
+  por sesión desde `Layout.jsx`) crea notas de cobro para servicios activos
+  mensual/anual que vencen en ≤7 días o ya vencieron.
+- **Idempotente**: la clave es `servicio_cliente_id + fecha_vencimiento` (el período).
+  Las notas anuladas también cuentan como emitidas (no se regeneran).
+- `facturacion.confirmarPago(nota, datosPago, userId)` hace el ciclo completo en un paso:
+  marca la nota pagada → inserta el ingreso (con tasa BCV si es Bs) → extiende
+  `fecha_renovacion` del servicio al siguiente período (anclado al vencimiento, no a la
+  fecha de pago; solo si `fecha_renovacion <= nota.fecha_vencimiento` para evitar doble
+  extensión si ya se renovó manualmente).
+- UI: modal "Confirmar Pago Recibido" en NotasPago (botón ✓ de cada nota).
+
 ## Lógica de renovaciones
 - `fecha_renovacion` se calcula automáticamente: inicio + 1 mes (mensual) o + 1 año (anual)
 - Al reactivar un servicio suspendido, la nueva renovación parte de HOY
@@ -115,6 +128,12 @@ npm run preview  # Preview del build
 4. Toda carga de datos lleva `try/catch` con toast de error (y botón Reintentar en Dashboard).
 5. `window.open` para PDFs debe llamarse ANTES de cualquier `await` (popup blockers);
    usar `abrirVentanaImpresion()` y pasar la ventana a la función de impresión.
+6. **Todo insert/update pasa por `limpiar()`** en `queries.js`: convierte `''` a NULL.
+   Los `<select>` opcionales envían `''` y PostgreSQL lo rechaza en columnas
+   uuid/integer/date (`invalid input syntax for type uuid: ""`). No insertar/actualizar
+   directo con `supabase.from(...)` desde las páginas — siempre vía `queries.js`.
+7. **No editar archivos con regex de PowerShell** (`-replace` + `Set-Content`): corrompe
+   los acentos UTF-8. Usar las herramientas de edición del agente.
 
 ## Próximas funcionalidades a implementar
 1. **WhatsApp bot**: Notificaciones automáticas a clientes sobre vencimientos

@@ -1,11 +1,20 @@
 import { useEffect, useState } from 'react'
-import { notasPago as db, clientes as dbClientes } from '../lib/queries'
+import { notasPago as db, clientes as dbClientes, facturacion } from '../lib/queries'
 import useStore from '../store/useStore'
 import Modal from '../components/Modal'
 import { imprimirNotaPago } from '../lib/pdf'
-import { Plus, Search, CheckCircle, Trash2, FileText, Clock, Printer } from 'lucide-react'
+import { fmtMonto } from '../lib/format'
+import { Plus, Search, CheckCircle, Trash2, FileText, Clock, Printer, Wallet } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
+
+const METODOS_PAGO = ['transferencia', 'zelle', 'efectivo', 'paypal', 'binance', 'otro']
+const FORM_PAGO_INICIAL = {
+  fecha_pago: new Date().toISOString().split('T')[0],
+  metodo_pago: 'transferencia',
+  referencia: '',
+  tasa_cambio: '',
+}
 
 const ESTADO_BADGE = {
   pendiente: 'badge-suspended',
@@ -64,11 +73,44 @@ export default function NotasPago() {
     }
   }
 
-  const marcarPagada = async (n) => {
-    if (!confirm(`¿Marcar como pagada la nota ${n.numero}?`)) return
-    await db.marcarPagada(n.id)
-    addToast('Marcada como pagada ✓', 'success')
-    cargar()
+  const [notaPagar, setNotaPagar] = useState(null)
+  const [formPago, setFormPago] = useState(FORM_PAGO_INICIAL)
+  const [confirmando, setConfirmando] = useState(false)
+
+  const abrirConfirmarPago = (n) => {
+    setFormPago(FORM_PAGO_INICIAL)
+    setNotaPagar(n)
+  }
+
+  const confirmarPago = async (e) => {
+    e.preventDefault()
+    setConfirmando(true)
+    try {
+      const { error, servicioRenovado, notaPagada } = await facturacion.confirmarPago(
+        notaPagar, formPago, user.id
+      )
+      if (error) {
+        addToast(
+          (notaPagada ? 'Nota pagada, pero falló el ingreso: ' : 'Error: ') + error.message,
+          notaPagada ? 'warning' : 'error'
+        )
+        if (!notaPagada) return
+      } else {
+        addToast('Pago confirmado: nota pagada + ingreso registrado ✓', 'success')
+        if (servicioRenovado) {
+          addToast(
+            `🔄 Servicio renovado hasta ${format(new Date(servicioRenovado + 'T00:00:00'), 'dd MMM yyyy', { locale: es })}`,
+            'success'
+          )
+        }
+      }
+      setNotaPagar(null)
+      cargar()
+    } catch (err) {
+      addToast('Error de conexión: ' + (err?.message || 'inténtalo de nuevo'), 'error')
+    } finally {
+      setConfirmando(false)
+    }
   }
 
   const eliminar = async (n) => {
@@ -180,7 +222,7 @@ export default function NotasPago() {
                         <Printer className="w-3.5 h-3.5" />
                       </button>
                       {n.estado !== 'pagada' && n.estado !== 'anulada' && (
-                        <button onClick={() => marcarPagada(n)} className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-900/30 rounded-lg" title="Marcar pagada">
+                        <button onClick={() => abrirConfirmarPago(n)} className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-900/30 rounded-lg" title="Confirmar pago recibido">
                           <CheckCircle className="w-3.5 h-3.5" />
                         </button>
                       )}
@@ -195,6 +237,76 @@ export default function NotasPago() {
           </table>
         </div>
       </div>
+
+      {/* Modal confirmar pago */}
+      {notaPagar && (
+        <Modal titulo="Confirmar Pago Recibido" onClose={() => setNotaPagar(null)}>
+          <form onSubmit={confirmarPago} className="space-y-4">
+            {/* Resumen de la nota */}
+            <div className="card !p-4 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-mono text-brand-300">{notaPagar.numero}</p>
+                <p className="text-sm font-medium text-slate-200 truncate">{notaPagar.clientes?.nombre}</p>
+                <p className="text-xs text-slate-500 truncate">{notaPagar.concepto}</p>
+              </div>
+              <p className="font-mono text-xl font-bold text-emerald-400 whitespace-nowrap">
+                {fmtMonto(notaPagar.monto, notaPagar.moneda)}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="label">Fecha del pago *</label>
+                <input type="date" className="input" value={formPago.fecha_pago}
+                  onChange={e => setFormPago({ ...formPago, fecha_pago: e.target.value })} required />
+              </div>
+              <div>
+                <label className="label">Método de pago</label>
+                <select className="input" value={formPago.metodo_pago}
+                  onChange={e => setFormPago({ ...formPago, metodo_pago: e.target.value })}>
+                  {METODOS_PAGO.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              {notaPagar.moneda === 'BS' && (
+                <div>
+                  <label className="label">Tasa BCV (Bs./$)</label>
+                  <input type="number" step="0.01" min="0" className="input" value={formPago.tasa_cambio}
+                    onChange={e => setFormPago({ ...formPago, tasa_cambio: e.target.value })}
+                    placeholder="Ej: 45.50" />
+                  {formPago.tasa_cambio > 0 && (
+                    <p className="text-xs text-slate-500 mt-1">
+                      ≈ {fmtMonto(Number(notaPagar.monto) / Number(formPago.tasa_cambio), 'USD')}
+                    </p>
+                  )}
+                </div>
+              )}
+              <div className={notaPagar.moneda === 'BS' ? '' : 'col-span-2'}>
+                <label className="label">Referencia bancaria</label>
+                <input className="input" value={formPago.referencia}
+                  onChange={e => setFormPago({ ...formPago, referencia: e.target.value })}
+                  placeholder="Nº de comprobante" />
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2 text-xs text-slate-400 bg-brand-500/[0.08] border border-brand-500/20 rounded-xl p-3">
+              <Wallet className="w-4 h-4 text-brand-300 flex-shrink-0 mt-0.5" />
+              <p>
+                Al confirmar: la nota pasa a <b>pagada</b>, se registra el <b>ingreso</b> automáticamente
+                {notaPagar.servicio_cliente_id && <> y la <b>renovación del servicio se extiende</b> al siguiente período</>}.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setNotaPagar(null)} className="btn-secondary">Cancelar</button>
+              <button type="submit" disabled={confirmando} className="btn-success">
+                {confirmando
+                  ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  : <><CheckCircle className="w-4 h-4" /> Confirmar Pago</>}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {/* Modal nueva nota */}
       {modal && (

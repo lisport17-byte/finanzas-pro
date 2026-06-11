@@ -3,6 +3,18 @@
  * Todas las consultas filtran por user_id automáticamente via RLS
  */
 import { supabase } from './supabase'
+import { addMonths, addYears, format as fmtFecha } from 'date-fns'
+
+/**
+ * Convierte cadenas vacías a NULL antes de insertar/actualizar.
+ * Los <select> opcionales envían '' y PostgreSQL rechaza '' en columnas
+ * uuid/integer/date ("invalid input syntax for type uuid").
+ */
+const limpiar = (datos) => {
+  const out = {}
+  for (const [k, v] of Object.entries(datos)) out[k] = v === '' ? null : v
+  return out
+}
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
@@ -62,10 +74,10 @@ export const clientes = {
       .single(),
 
   crear: (datos) =>
-    supabase.from('clientes').insert(datos).select().single(),
+    supabase.from('clientes').insert(limpiar(datos)).select().single(),
 
   actualizar: (id, datos) =>
-    supabase.from('clientes').update(datos).eq('id', id).select().single(),
+    supabase.from('clientes').update(limpiar(datos)).eq('id', id).select().single(),
 
   eliminar: (id) =>
     supabase.from('clientes').delete().eq('id', id),
@@ -81,10 +93,10 @@ export const tiposServicio = {
     supabase.from('tipos_servicio').select('*').order('nombre'),
 
   crear: (datos) =>
-    supabase.from('tipos_servicio').insert(datos).select().single(),
+    supabase.from('tipos_servicio').insert(limpiar(datos)).select().single(),
 
   actualizar: (id, datos) =>
-    supabase.from('tipos_servicio').update(datos).eq('id', id),
+    supabase.from('tipos_servicio').update(limpiar(datos)).eq('id', id),
 
   eliminar: (id) =>
     supabase.from('tipos_servicio').delete().eq('id', id),
@@ -136,10 +148,10 @@ export const serviciosClientes = {
   },
 
   crear: (datos) =>
-    supabase.from('servicios_clientes').insert(datos).select().single(),
+    supabase.from('servicios_clientes').insert(limpiar(datos)).select().single(),
 
   actualizar: (id, datos) =>
-    supabase.from('servicios_clientes').update(datos).eq('id', id).select().single(),
+    supabase.from('servicios_clientes').update(limpiar(datos)).eq('id', id).select().single(),
 
   suspender: (id) =>
     supabase.from('servicios_clientes').update({ estado: 'suspendido' }).eq('id', id),
@@ -178,7 +190,7 @@ export const notasPago = {
       .from('notas_pago')
       .select('id', { count: 'exact', head: true })
     const numero = `NP-${new Date().getFullYear()}-${String((count || 0) + 1).padStart(3, '0')}`
-    return supabase.from('notas_pago').insert({ ...datos, numero }).select().single()
+    return supabase.from('notas_pago').insert(limpiar({ ...datos, numero })).select().single()
   },
 
   obtenerPorCliente: (clienteId) =>
@@ -189,7 +201,7 @@ export const notasPago = {
       .order('fecha_emision', { ascending: false }),
 
   actualizar: (id, datos) =>
-    supabase.from('notas_pago').update(datos).eq('id', id).select().single(),
+    supabase.from('notas_pago').update(limpiar(datos)).eq('id', id).select().single(),
 
   marcarPagada: (id) =>
     supabase.from('notas_pago').update({ estado: 'pagada' }).eq('id', id),
@@ -237,10 +249,10 @@ export const ingresos = {
       .order('fecha_pago', { ascending: false }),
 
   crear: (datos) =>
-    supabase.from('ingresos').insert(datos).select().single(),
+    supabase.from('ingresos').insert(limpiar(datos)).select().single(),
 
   actualizar: (id, datos) =>
-    supabase.from('ingresos').update(datos).eq('id', id),
+    supabase.from('ingresos').update(limpiar(datos)).eq('id', id),
 
   eliminar: (id) =>
     supabase.from('ingresos').delete().eq('id', id),
@@ -273,10 +285,10 @@ export const gastos = {
       .order('nombre'),
 
   crear: (datos) =>
-    supabase.from('gastos').insert(datos).select().single(),
+    supabase.from('gastos').insert(limpiar(datos)).select().single(),
 
   actualizar: (id, datos) =>
-    supabase.from('gastos').update(datos).eq('id', id),
+    supabase.from('gastos').update(limpiar(datos)).eq('id', id),
 
   marcarPagado: (id) =>
     supabase.from('gastos').update({ estado: 'pagado' }).eq('id', id),
@@ -311,6 +323,114 @@ export const gastos = {
       .eq('mes', mes)
       .eq('anio', anio)
     return data?.reduce((sum, g) => sum + Number(g.monto), 0) || 0
+  },
+}
+
+// ─── FACTURACIÓN AUTOMÁTICA ───────────────────────────────────────────────────
+
+export const facturacion = {
+  /**
+   * Genera notas de cobro para servicios activos (mensual/anual) cuya renovación
+   * vence dentro de `diasAnticipacion` días o ya venció. Idempotente: una sola
+   * nota por servicio y período (clave: servicio_cliente_id + fecha_vencimiento).
+   * Se ejecuta al abrir la app — no requiere servidor.
+   */
+  generarNotasRenovacion: async (userId, diasAnticipacion = 7) => {
+    const hoy = new Date()
+    const limite = fmtFecha(new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() + diasAnticipacion), 'yyyy-MM-dd')
+
+    const { data: servicios } = await supabase
+      .from('servicios_clientes')
+      .select('id, cliente_id, nombre_servicio, precio, moneda, tipo_renovacion, fecha_renovacion')
+      .eq('estado', 'activo')
+      .in('tipo_renovacion', ['mensual', 'anual'])
+      .lte('fecha_renovacion', limite)
+
+    if (!servicios?.length) return { creadas: 0 }
+
+    // Notas ya emitidas para esos servicios (cualquier estado, incluso anuladas:
+    // si el usuario anuló una, no se la volvemos a generar)
+    const { data: notas } = await supabase
+      .from('notas_pago')
+      .select('servicio_cliente_id, fecha_vencimiento')
+      .in('servicio_cliente_id', servicios.map((s) => s.id))
+
+    const yaEmitidas = new Set((notas || []).map((n) => `${n.servicio_cliente_id}|${n.fecha_vencimiento}`))
+    const porFacturar = servicios.filter(
+      (s) => Number(s.precio) > 0 && !yaEmitidas.has(`${s.id}|${s.fecha_renovacion}`)
+    )
+
+    let creadas = 0
+    // Secuencial para que la numeración NP-AAAA-NNN no se repita
+    for (const s of porFacturar) {
+      const { error } = await notasPago.crear({
+        cliente_id: s.cliente_id,
+        servicio_cliente_id: s.id,
+        concepto: `Renovación ${s.tipo_renovacion} — ${s.nombre_servicio}`,
+        monto: Number(s.precio),
+        moneda: s.moneda,
+        fecha_emision: fmtFecha(hoy, 'yyyy-MM-dd'),
+        fecha_vencimiento: s.fecha_renovacion,
+        estado: 'pendiente',
+        user_id: userId,
+      })
+      if (!error) creadas++
+    }
+    return { creadas }
+  },
+
+  /**
+   * Confirma el pago de una nota en un solo paso:
+   * 1) marca la nota como pagada
+   * 2) registra el ingreso (con tasa BCV si fue en Bs)
+   * 3) si la nota viene de un servicio, extiende su fecha_renovacion al
+   *    siguiente período (anclado al vencimiento, no a la fecha de pago)
+   */
+  confirmarPago: async (nota, { fecha_pago, metodo_pago, referencia, tasa_cambio }, userId) => {
+    const { error: errNota } = await supabase
+      .from('notas_pago').update({ estado: 'pagada' }).eq('id', nota.id)
+    if (errNota) return { error: errNota }
+
+    const monto = Number(nota.monto)
+    const esBS = nota.moneda === 'BS'
+    const tasa = tasa_cambio ? Number(tasa_cambio) : null
+    const { error: errIngreso } = await supabase.from('ingresos').insert(limpiar({
+      cliente_id: nota.cliente_id,
+      nota_pago_id: nota.id,
+      concepto: `${nota.numero || 'Pago'} — ${nota.concepto}`,
+      monto,
+      moneda: nota.moneda,
+      tasa_cambio: esBS ? tasa : null,
+      monto_usd: esBS ? (tasa ? Number((monto / tasa).toFixed(2)) : null) : monto,
+      fecha_pago,
+      metodo_pago,
+      referencia: referencia || null,
+      user_id: userId,
+    }))
+    if (errIngreso) return { error: errIngreso, notaPagada: true }
+
+    // Extender la renovación del servicio vinculado
+    let servicioRenovado = null
+    if (nota.servicio_cliente_id) {
+      const { data: s } = await supabase
+        .from('servicios_clientes')
+        .select('id, fecha_renovacion, tipo_renovacion')
+        .eq('id', nota.servicio_cliente_id)
+        .single()
+      // Solo si el servicio sigue en el período de esta nota (evita doble extensión
+      // si ya se renovó manualmente desde Alertas)
+      if (s && s.tipo_renovacion !== 'pago_unico' && s.fecha_renovacion <= nota.fecha_vencimiento) {
+        const base = new Date(s.fecha_renovacion + 'T00:00:00')
+        const nueva = s.tipo_renovacion === 'anual' ? addYears(base, 1) : addMonths(base, 1)
+        const nuevaFecha = fmtFecha(nueva, 'yyyy-MM-dd')
+        const { error: errSvc } = await supabase
+          .from('servicios_clientes')
+          .update({ fecha_renovacion: nuevaFecha, estado: 'activo' })
+          .eq('id', s.id)
+        if (!errSvc) servicioRenovado = nuevaFecha
+      }
+    }
+    return { error: null, servicioRenovado }
   },
 }
 
