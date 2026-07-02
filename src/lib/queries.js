@@ -26,8 +26,14 @@ export const auth = {
 
   getUser: () => supabase.auth.getUser(),
 
+  /** Envía el correo de recuperación; el enlace vuelve a esta misma app */
   resetPassword: (email) =>
-    supabase.auth.resetPasswordForEmail(email),
+    supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname,
+    }),
+
+  /** Cambia la contraseña del usuario ya autenticado (flujo de recuperación) */
+  actualizarPassword: (password) => supabase.auth.updateUser({ password }),
 }
 
 // ─── INICIALIZACIÓN ────────────────────────────────────────────────────────────
