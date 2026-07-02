@@ -16,11 +16,14 @@ Sistema de control financiero empresarial PWA (Progressive Web App). Permite ges
 ## Estructura de archivos
 ```
 src/
+├── sw.js                # Service Worker propio (injectManifest): offline + Web Push
 ├── lib/
 │   ├── supabase.js      # Cliente Supabase (usa .env)
 │   ├── queries.js       # Todas las funciones de BD (incluye `reportes` para analítica)
 │   ├── format.js        # fmtUSD, fmtMonto, nombres de meses
 │   ├── export.js        # descargarCSV() — exportación compatible con Excel
+│   ├── push.js          # Suscripción Web Push del dispositivo (tabla push_suscripciones)
+│   ├── biometria.js     # Bloqueo con huella/rostro (WebAuthn, candado local)
 │   └── pdf.js           # imprimirNotaPago() — recibos imprimibles/PDF sin dependencias
 ├── store/
 │   └── useStore.js      # Estado global con Zustand
@@ -30,7 +33,9 @@ src/
 │   ├── Header.jsx       # Barra superior
 │   ├── BottomNav.jsx    # Navegación inferior móvil (estilo app nativa)
 │   ├── Modal.jsx        # Modal reutilizable (bottom sheet en móvil)
-│   └── Toast.jsx        # Notificaciones
+│   ├── Toast.jsx        # Notificaciones
+│   ├── RestablecerClave.jsx   # Nueva contraseña (evento PASSWORD_RECOVERY)
+│   └── BloqueoBiometrico.jsx  # Candado con huella al abrir la app
 ├── pages/
 │   ├── Login.jsx        # Autenticación (split-screen con panel de marca)
 │   ├── Dashboard.jsx    # Resumen financiero con gráficas (recharts)
@@ -56,6 +61,7 @@ src/
 ```bash
 VITE_SUPABASE_URL=https://tu-proyecto.supabase.co
 VITE_SUPABASE_ANON_KEY=tu_anon_key
+VITE_VAPID_PUBLIC_KEY=llave_publica_vapid   # Web Push (Fase 1)
 ```
 Para GitHub Actions: agregar en Settings → Secrets → Actions
 
@@ -69,6 +75,7 @@ Para GitHub Actions: agregar en Settings → Secrets → Actions
 | `ingresos` | Pagos recibidos (USD o Bs con tasa BCV) |
 | `gastos` | Gastos mensuales recurrentes o únicos |
 | `configuracion` | Parámetros del sistema |
+| `push_suscripciones` | Dispositivos suscritos a Web Push (ver `supabase-push.sql`) |
 
 Todas las tablas tienen RLS habilitado — solo el `user_id` dueño ve sus datos.
 
@@ -135,10 +142,23 @@ npm run preview  # Preview del build
 7. **No editar archivos con regex de PowerShell** (`-replace` + `Set-Content`): corrompe
    los acentos UTF-8. Usar las herramientas de edición del agente.
 
+## Fase 1 implementada (v2.1) — Notificaciones y acceso
+- ✅ **Web Push**: SW propio (`src/sw.js`, estrategia `injectManifest` en vite.config).
+  La Edge Function `supabase/functions/enviar-recordatorios/index.ts` corre a diario
+  (pg_cron, 12:00 UTC) y envía un resumen de vencimientos por usuario (VAPID).
+  Protegida con header `x-cron-secret`. Suscripción por dispositivo en Alertas.
+- ✅ **Recuperar contraseña**: enlace en Login → email → evento `PASSWORD_RECOVERY`
+  → pantalla `RestablecerClave`. `redirectTo` apunta a origin+pathname (compatible
+  con HashRouter/GitHub Pages).
+- ✅ **Bloqueo con huella**: WebAuthn como candado local (no reemplaza el login).
+  Flag y credencial en localStorage; toggle en Alertas.
+- Ver `GUIA_FASE1_NOTIFICACIONES.md` para la configuración (llaves VAPID, secrets).
+
 ## Próximas funcionalidades a implementar
 1. **WhatsApp bot**: Notificaciones automáticas a clientes sobre vencimientos
 2. **Multi-moneda**: Soporte para otras monedas (EUR, COP, etc.)
 3. **Email reminders**: Avisos automáticos vía Supabase Edge Functions
+4. **Fase 2 — Capacitor**: empaquetar como APK nativo para Play Store (FCM)
 
 ## Seguridad
 - Row Level Security (RLS) activo en Supabase — datos completamente aislados por usuario

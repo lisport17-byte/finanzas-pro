@@ -10,6 +10,11 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
+      // injectManifest: usamos nuestro propio SW (src/sw.js) para poder
+      // recibir notificaciones Web Push además del precache offline
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {
@@ -40,13 +45,11 @@ export default defineConfig({
           }
         ]
       },
-      workbox: {
+      // NO interceptar peticiones a Supabase: el SW con credentials:'include'
+      // rompía CORS (Supabase responde ACAO:*) y añadía 8s de espera por request.
+      // Esa regla ahora vive en src/sw.js (denylist de NavigationRoute).
+      injectManifest: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
-        cleanupOutdatedCaches: true,
-        // NO interceptar peticiones a Supabase: el SW con credentials:'include'
-        // rompía CORS (Supabase responde ACAO:*) y añadía 8s de espera por request.
-        // En una app contable los datos deben ir SIEMPRE directo a la red.
-        navigateFallbackDenylist: [/supabase/],
       }
     })
   ],
