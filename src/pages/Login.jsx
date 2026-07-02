@@ -35,6 +35,16 @@ export default function Login() {
     }
   }
 
+  const handleOlvide = async () => {
+    if (!email) {
+      addToast('Escribe tu correo arriba y vuelve a tocar el enlace', 'warning')
+      return
+    }
+    const { error } = await auth.resetPassword(email)
+    if (error) addToast('No se pudo enviar el correo: ' + error.message, 'error')
+    else addToast(`📧 Enlace de recuperación enviado a ${email}. Ábrelo desde este mismo dispositivo.`, 'success')
+  }
+
   return (
     <div className="min-h-[100dvh] flex">
       {/* Panel de marca — solo desktop */}
@@ -143,6 +153,14 @@ export default function Login() {
                 ) : (
                   'Entrar al Sistema'
                 )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOlvide}
+                className="w-full text-center text-xs text-brand-300 hover:text-brand-200 transition-colors pt-1"
+              >
+                ¿Olvidaste tu contraseña?
               </button>
             </form>
           </div>

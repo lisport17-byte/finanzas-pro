@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { serviciosClientes as db, notasPago as dbNotas } from '../lib/queries'
 import useStore from '../store/useStore'
 import { fmtMonto } from '../lib/format'
-import { AlertTriangle, Clock, PauseCircle, PlayCircle, Bell, CheckCircle } from 'lucide-react'
+import { push } from '../lib/push'
+import { biometria } from '../lib/biometria'
+import { AlertTriangle, Clock, PauseCircle, PlayCircle, Bell, CheckCircle, BellRing, Fingerprint } from 'lucide-react'
 import { format, differenceInDays, addMonths, addYears } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -19,6 +21,37 @@ export default function Alertas() {
   const [proximos, setProximos] = useState([])
   const [cargando, setCargando] = useState(true)
   const { addToast, setAlertasCount, user } = useStore()
+
+  // Estado de notificaciones push y bloqueo con huella (por dispositivo)
+  const [pushActivo, setPushActivo] = useState(false)
+  const [pushOcupado, setPushOcupado] = useState(false)
+  const [huellaActiva, setHuellaActiva] = useState(biometria.estaActiva())
+  const [huellaDisponible, setHuellaDisponible] = useState(false)
+
+  useEffect(() => {
+    push.estaActivo().then(setPushActivo)
+    biometria.disponible().then(setHuellaDisponible)
+  }, [])
+
+  const togglePush = async () => {
+    setPushOcupado(true)
+    const r = pushActivo ? await push.desactivar() : await push.activar(user.id)
+    setPushOcupado(false)
+    addToast(r.mensaje, r.ok ? 'success' : 'error')
+    if (r.ok) setPushActivo(!pushActivo)
+  }
+
+  const toggleHuella = async () => {
+    if (huellaActiva) {
+      const r = biometria.desactivar()
+      setHuellaActiva(false)
+      addToast(r.mensaje, 'info')
+    } else {
+      const r = await biometria.activar(user)
+      addToast(r.mensaje, r.ok ? 'success' : 'error')
+      if (r.ok) setHuellaActiva(true)
+    }
+  }
 
   const cargar = async () => {
     setCargando(true)
@@ -191,6 +224,70 @@ export default function Alertas() {
           </div>
         </div>
       )}
+
+      {/* Configuración: avisos push y seguridad */}
+      <div>
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-300 mb-3">
+          <BellRing className="w-4 h-4" />
+          Avisos y seguridad de este dispositivo
+        </h2>
+        <div className="grid md:grid-cols-2 gap-3">
+          {/* Notificaciones push */}
+          <div className="card flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${pushActivo ? 'bg-indigo-500/20 text-indigo-300' : 'bg-slate-800 text-slate-500'}`}>
+                <BellRing className="w-5 h-5" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-slate-100">Recordatorios push</p>
+                <p className="text-xs text-slate-500">
+                  {!push.soportado()
+                    ? 'No soportado en este navegador'
+                    : pushActivo
+                      ? 'Recibirás un aviso diario si hay vencimientos'
+                      : 'Recibe avisos aunque la app esté cerrada'}
+                </p>
+              </div>
+            </div>
+            {push.soportado() && (
+              <button
+                onClick={togglePush}
+                disabled={pushOcupado}
+                className={pushActivo ? 'btn-secondary text-xs py-1.5' : 'btn-primary text-xs py-1.5'}
+              >
+                {pushOcupado ? '...' : pushActivo ? 'Desactivar' : 'Activar'}
+              </button>
+            )}
+          </div>
+
+          {/* Bloqueo con huella */}
+          <div className="card flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${huellaActiva ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800 text-slate-500'}`}>
+                <Fingerprint className="w-5 h-5" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-slate-100">Bloqueo con huella</p>
+                <p className="text-xs text-slate-500">
+                  {!huellaDisponible && !huellaActiva
+                    ? 'Este dispositivo no tiene biometría disponible'
+                    : huellaActiva
+                      ? 'Se pedirá tu huella al abrir la app'
+                      : 'Protege la app con tu huella o rostro'}
+                </p>
+              </div>
+            </div>
+            {(huellaDisponible || huellaActiva) && (
+              <button
+                onClick={toggleHuella}
+                className={huellaActiva ? 'btn-secondary text-xs py-1.5' : 'btn-primary text-xs py-1.5'}
+              >
+                {huellaActiva ? 'Desactivar' : 'Activar'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
