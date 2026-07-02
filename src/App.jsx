@@ -7,6 +7,9 @@ import useStore from './store/useStore'
 // Componentes
 import Layout from './components/Layout'
 import Toast from './components/Toast'
+import RestablecerClave from './components/RestablecerClave'
+import BloqueoBiometrico from './components/BloqueoBiometrico'
+import { biometria } from './lib/biometria'
 
 // Páginas
 import Login from './pages/Login'
@@ -26,8 +29,12 @@ function ProtectedRoute({ children }) {
 }
 
 export default function App() {
-  const { setUser, toasts, removeToast } = useStore()
+  const { user, setUser, toasts, removeToast } = useStore()
   const [loading, setLoading] = useState(true)
+  // Recuperación de contraseña: se activa al llegar desde el enlace del correo
+  const [recuperando, setRecuperando] = useState(false)
+  // Candado biométrico: si está activado, pide la huella al abrir la app
+  const [bloqueado, setBloqueado] = useState(biometria.estaActiva())
 
   useEffect(() => {
     // Timeout de seguridad: si getSession tarda más de 8s, carga igual
@@ -55,6 +62,11 @@ export default function App() {
       (event, session) => {
         if (session?.user) {
           setUser(session.user)
+          // Llegó desde el enlace "¿Olvidaste tu contraseña?" del correo
+          if (event === 'PASSWORD_RECOVERY') {
+            setRecuperando(true)
+            setBloqueado(false) // no pedir huella en medio de la recuperación
+          }
           // Solo inicializar en el primer login real, no en cada recarga
           if (event === 'SIGNED_IN') {
             setTimeout(() => { inicializarDatos(session.user.id) }, 0)
@@ -80,6 +92,26 @@ export default function App() {
         </div>
       </div>
     )
+  }
+
+  // Pantalla de nueva contraseña (llegó desde el correo de recuperación)
+  if (recuperando) {
+    return (
+      <>
+        <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full">
+          {toasts.map((t) => (
+            <Toast key={t.id} toast={t} onClose={() => removeToast(t.id)} />
+          ))}
+        </div>
+        <RestablecerClave onListo={() => setRecuperando(false)} />
+      </>
+    )
+  }
+
+  // Candado biométrico: pide la huella antes de mostrar los datos
+  // (solo si hay sesión activa; si no, va directo al login normal)
+  if (bloqueado && user) {
+    return <BloqueoBiometrico onDesbloqueado={() => setBloqueado(false)} />
   }
 
   return (
