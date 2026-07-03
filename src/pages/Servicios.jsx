@@ -46,6 +46,7 @@ export default function Servicios() {
   const [modal, setModal] = useState(null)
   const [seleccionado, setSeleccionado] = useState(null)
   const [form, setForm] = useState(FORM_INICIAL)
+  const [nuevoTipo, setNuevoTipo] = useState('') // nombre libre cuando eligen "Otro..."
   const [guardando, setGuardando] = useState(false)
   const { addToast, user } = useStore()
 
@@ -75,6 +76,7 @@ export default function Servicios() {
     const f = { ...FORM_INICIAL }
     f.fecha_renovacion = calcularRenovacion(f.fecha_inicio, f.tipo_renovacion)
     setForm(f)
+    setNuevoTipo('')
     setSeleccionado(null)
     setModal('crear')
   }
@@ -94,6 +96,7 @@ export default function Servicios() {
       alerta_dias: s.alerta_dias || 5,
       notas: s.notas || '',
     })
+    setNuevoTipo('')
     setSeleccionado(s)
     setModal('editar')
   }
@@ -104,10 +107,24 @@ export default function Servicios() {
     e.preventDefault()
     setGuardando(true)
     try {
-      const datos = { ...form, precio: Number(form.precio), user_id: user.id }
+      // "➕ Otro...": crear el nuevo tipo en el catálogo y usar su id
+      let tipoId = form.tipo_servicio_id
+      if (tipoId === '__nuevo__') {
+        const nombre = nuevoTipo.trim()
+        if (!nombre) { addToast('Escribe el nombre del nuevo tipo de servicio', 'warning'); return }
+        const existente = tipos.find(t => t.nombre.toLowerCase() === nombre.toLowerCase())
+        if (existente) {
+          tipoId = existente.id
+        } else {
+          const { data: tipoCreado, error: errTipo } = await dbTipos.crear({ nombre, user_id: user.id })
+          if (errTipo) { addToast('No se pudo crear el tipo: ' + errTipo.message, 'error'); return }
+          tipoId = tipoCreado.id
+        }
+      }
+      const datos = { ...form, tipo_servicio_id: tipoId, precio: Number(form.precio) }
       const { error } = modal === 'crear'
-        ? await db.crear(datos)
-        : await db.actualizar(seleccionado.id, { ...form, precio: Number(form.precio) })
+        ? await db.crear({ ...datos, user_id: user.id })
+        : await db.actualizar(seleccionado.id, datos)
       if (error) { addToast('Error: ' + error.message, 'error'); return }
       addToast(modal === 'crear' ? 'Servicio registrado ✓' : 'Servicio actualizado ✓', 'success')
       cerrar(); cargar()
@@ -264,12 +281,25 @@ export default function Servicios() {
               <div>
                 <label className="label">Tipo de servicio</label>
                 <select className="input" value={form.tipo_servicio_id} onChange={e => {
-                  const tipo = tipos.find(t => t.id === e.target.value)
-                  setForm({...form, tipo_servicio_id: e.target.value, nombre_servicio: tipo?.nombre || form.nombre_servicio, precio: tipo?.precio_base?.toString() || form.precio})
+                  const v = e.target.value
+                  if (v === '__nuevo__') { setForm({...form, tipo_servicio_id: v}); return }
+                  const tipo = tipos.find(t => t.id === v)
+                  setForm({...form, tipo_servicio_id: v, nombre_servicio: tipo?.nombre || form.nombre_servicio, precio: tipo?.precio_base?.toString() || form.precio})
                 }}>
-                  <option value="">— Personalizado —</option>
+                  <option value="">— Sin tipo (personalizado) —</option>
+                  <option value="__nuevo__">➕ Otro… (crear nuevo tipo)</option>
                   {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
                 </select>
+                {form.tipo_servicio_id === '__nuevo__' && (
+                  <input
+                    className="input mt-2"
+                    value={nuevoTipo}
+                    onChange={e => setNuevoTipo(e.target.value)}
+                    placeholder="Nombre del nuevo tipo (ej: Hosting, Diseño...)"
+                    required
+                    autoFocus
+                  />
+                )}
               </div>
               <div>
                 <label className="label">Nombre del servicio *</label>
