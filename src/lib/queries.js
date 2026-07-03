@@ -343,7 +343,13 @@ export const facturacion = {
    */
   generarNotasRenovacion: async (userId, diasAnticipacion = 7) => {
     const hoy = new Date()
-    const limite = fmtFecha(new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() + diasAnticipacion), 'yyyy-MM-dd')
+    // Regla de facturación: desde el día 1 del mes ya se emiten las CXC de
+    // TODOS los servicios que renuevan dentro del mes en curso (aunque el
+    // período aún no venza). Además cubre los próximos `diasAnticipacion`
+    // días, para renovaciones de los primeros días del mes siguiente.
+    const finDeMes = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)
+    const porAnticipacion = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() + diasAnticipacion)
+    const limite = fmtFecha(porAnticipacion > finDeMes ? porAnticipacion : finDeMes, 'yyyy-MM-dd')
 
     const { data: servicios } = await supabase
       .from('servicios_clientes')
