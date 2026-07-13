@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
-import { serviciosClientes as db, tiposServicio as dbTipos, clientes as dbClientes } from '../lib/queries'
+import { serviciosClientes as db, tiposServicio as dbTipos, clientes as dbClientes, facturacion } from '../lib/queries'
 import useStore from '../store/useStore'
 import Modal from '../components/Modal'
-import { Plus, Search, Edit2, Trash2, PauseCircle, PlayCircle, Calendar } from 'lucide-react'
+import { Plus, Search, Edit2, Trash2, PauseCircle, PlayCircle, Calendar, FileText, MessageCircle } from 'lucide-react'
 import { format, addMonths, addYears, differenceInDays } from 'date-fns'
 import { es } from 'date-fns/locale'
+import { imprimirFacturaMensual, numeroFactura } from '../lib/pdf'
+import { abrirWhatsApp, mensajeFactura } from '../lib/whatsapp'
 
 const ESTADO_BADGE = {
   activo:     'badge-active',
@@ -46,7 +48,9 @@ export default function Servicios() {
   const [modal, setModal] = useState(null)
   const [seleccionado, setSeleccionado] = useState(null)
   const [form, setForm] = useState(FORM_INICIAL)
+  const [nuevoTipo, setNuevoTipo] = useState('') // nombre libre cuando eligen "Otro..."
   const [guardando, setGuardando] = useState(false)
+  const [factura, setFactura] = useState({ cliente_id: '', periodo: format(new Date(), 'yyyy-MM'), ids: [] })
   const { addToast, user } = useStore()
 
   const cargar = async () => {
@@ -75,6 +79,7 @@ export default function Servicios() {
     const f = { ...FORM_INICIAL }
     f.fecha_renovacion = calcularRenovacion(f.fecha_inicio, f.tipo_renovacion)
     setForm(f)
+    setNuevoTipo('')
     setSeleccionado(null)
     setModal('crear')
   }
@@ -94,6 +99,7 @@ export default function Servicios() {
       alerta_dias: s.alerta_dias || 5,
       notas: s.notas || '',
     })
+    setNuevoTipo('')
     setSeleccionado(s)
     setModal('editar')
   }
@@ -104,12 +110,31 @@ export default function Servicios() {
     e.preventDefault()
     setGuardando(true)
     try {
-      const datos = { ...form, precio: Number(form.precio), user_id: user.id }
+      // "➕ Otro...": crear el nuevo tipo en el catálogo y usar su id
+      let tipoId = form.tipo_servicio_id
+      if (tipoId === '__nuevo__') {
+        const nombre = nuevoTipo.trim()
+        if (!nombre) { addToast('Escribe el nombre del nuevo tipo de servicio', 'warning'); return }
+        const existente = tipos.find(t => t.nombre.toLowerCase() === nombre.toLowerCase())
+        if (existente) {
+          tipoId = existente.id
+        } else {
+          const { data: tipoCreado, error: errTipo } = await dbTipos.crear({ nombre, user_id: user.id })
+          if (errTipo) { addToast('No se pudo crear el tipo: ' + errTipo.message, 'error'); return }
+          tipoId = tipoCreado.id
+        }
+      }
+      const datos = { ...form, tipo_servicio_id: tipoId, precio: Number(form.precio) }
       const { error } = modal === 'crear'
-        ? await db.crear(datos)
-        : await db.actualizar(seleccionado.id, { ...form, precio: Number(form.precio) })
+        ? await db.crear({ ...datos, user_id: user.id })
+        : await db.actualizar(seleccionado.id, datos)
       if (error) { addToast('Error: ' + error.message, 'error'); return }
       addToast(modal === 'crear' ? 'Servicio registrado ✓' : 'Servicio actualizado ✓', 'success')
+      // Emitir de una vez la nota de cobro del servicio nuevo (idempotente)
+      if (modal === 'crear') {
+        const { creadas } = await facturacion.generarNotasRenovacion(user.id)
+        if (creadas > 0) addToast(`🧾 ${creadas} nota(s) de cobro emitida(s) en Cuentas x Cobrar`, 'info')
+      }
       cerrar(); cargar()
     } catch (err) {
       addToast('Error de conexión: ' + (err?.message || 'Inténtalo de nuevo'), 'error')
@@ -138,6 +163,77 @@ export default function Servicios() {
     cargar()
   }
 
+  // ---- Factura mensual consolidada ----
+
+  // Servicios facturables del cliente en el período (activos, más pagos únicos de ese mes)
+  const serviciosFacturables = (clienteId) =>
+    lista.filter((s) => s.cliente_id === clienteId && s.estado === 'activo')
+
+  // Preselección: mensuales siempre; anuales solo si renuevan ese mes; pago único solo si inició ese mes
+  const preseleccionar = (clienteId, periodo) =>
+    serviciosFacturables(clienteId)
+      .filter((s) =>
+        s.tipo_renovacion === 'mensual' ||
+        (s.tipo_renovacion === 'anual' && (s.fecha_renovacion || '').startsWith(periodo)) ||
+        (s.tipo_renovacion === 'pago_unico' && (s.fecha_inicio || '').startsWith(periodo))
+      )
+      .map((s) => s.id)
+
+  const abrirFactura = () => {
+    const periodo = format(new Date(), 'yyyy-MM')
+    // primer cliente que tenga servicios activos, como valor inicial
+    const primero = clientesLista.find((c) => serviciosFacturables(c.id).length > 0)
+    setFactura({
+      cliente_id: primero?.id || '',
+      periodo,
+      ids: primero ? preseleccionar(primero.id, periodo) : [],
+    })
+    setModal('factura')
+  }
+
+  const cambiarFactura = (cambios) => {
+    const f = { ...factura, ...cambios }
+    if (cambios.cliente_id !== undefined || cambios.periodo !== undefined) {
+      f.ids = f.cliente_id ? preseleccionar(f.cliente_id, f.periodo) : []
+    }
+    setFactura(f)
+  }
+
+  const toggleServicioFactura = (id) =>
+    setFactura((f) => ({
+      ...f,
+      ids: f.ids.includes(id) ? f.ids.filter((x) => x !== id) : [...f.ids, id],
+    }))
+
+  const generarFactura = () => {
+    const cliente = clientesLista.find((c) => c.id === factura.cliente_id)
+    const servicios = lista.filter((s) => factura.ids.includes(s.id))
+    if (!cliente || servicios.length === 0) {
+      addToast('Selecciona un cliente y al menos un servicio', 'warning')
+      return
+    }
+    const ok = imprimirFacturaMensual(cliente, servicios, factura.periodo, user?.email || '')
+    if (!ok) { addToast('El navegador bloqueó la ventana. Permite las ventanas emergentes.', 'error'); return }
+    cerrar()
+  }
+
+  const enviarFacturaWhatsApp = () => {
+    const cliente = clientesLista.find((c) => c.id === factura.cliente_id)
+    const servicios = lista.filter((s) => factura.ids.includes(s.id))
+    if (!cliente || servicios.length === 0) {
+      addToast('Selecciona un cliente y al menos un servicio', 'warning')
+      return
+    }
+    const numero = cliente.whatsapp || cliente.telefono
+    if (!numero) {
+      addToast(`${cliente.nombre} no tiene WhatsApp registrado. Agrégalo en Clientes.`, 'warning')
+      return
+    }
+    const texto = mensajeFactura(cliente, servicios, factura.periodo, numeroFactura(cliente, factura.periodo))
+    abrirWhatsApp(numero, texto)
+    addToast('Chat abierto con el resumen. Adjunta el PDF desde WhatsApp 📎', 'info')
+  }
+
   const filtrados = lista.filter((s) =>
     `${s.clientes?.nombre} ${s.nombre_servicio}`.toLowerCase().includes(filtro.toLowerCase())
   )
@@ -149,6 +245,9 @@ export default function Servicios() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
           <input className="input pl-9" placeholder="Buscar por cliente o servicio..." value={filtro} onChange={e => setFiltro(e.target.value)} />
         </div>
+        <button onClick={abrirFactura} className="btn-secondary whitespace-nowrap">
+          <FileText className="w-4 h-4" /> Factura Mensual
+        </button>
         <button onClick={abrirCrear} className="btn-primary whitespace-nowrap">
           <Plus className="w-4 h-4" /> Nuevo Servicio
         </button>
@@ -249,8 +348,86 @@ export default function Servicios() {
         </div>
       </div>
 
+      {/* Modal: factura mensual consolidada */}
+      {modal === 'factura' && (() => {
+        const candidatos = factura.cliente_id ? serviciosFacturables(factura.cliente_id) : []
+        const seleccionados = lista.filter((s) => factura.ids.includes(s.id))
+        const totalUSD = seleccionados.filter(s => s.moneda === 'USD').reduce((a, s) => a + Number(s.precio), 0)
+        const totalBS = seleccionados.filter(s => s.moneda === 'BS').reduce((a, s) => a + Number(s.precio), 0)
+        return (
+          <Modal titulo="Factura Mensual por Cliente" onClose={cerrar} ancho="max-w-xl">
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Cliente *</label>
+                  <select className="input" value={factura.cliente_id} onChange={e => cambiarFactura({ cliente_id: e.target.value })}>
+                    <option value="">— Selecciona —</option>
+                    {clientesLista
+                      .filter(c => serviciosFacturables(c.id).length > 0)
+                      .map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Mes a facturar</label>
+                  <input type="month" className="input" value={factura.periodo} onChange={e => cambiarFactura({ periodo: e.target.value })} />
+                </div>
+              </div>
+
+              <div>
+                <label className="label">Servicios a incluir</label>
+                {candidatos.length === 0 ? (
+                  <p className="text-sm text-slate-500 py-4 text-center">
+                    {factura.cliente_id ? 'Este cliente no tiene servicios activos' : 'Selecciona un cliente'}
+                  </p>
+                ) : (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                    {candidatos.map((s) => (
+                      <label key={s.id} className="flex items-center gap-3 p-2.5 rounded-lg bg-slate-800/50 hover:bg-slate-800 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 accent-indigo-500"
+                          checked={factura.ids.includes(s.id)}
+                          onChange={() => toggleServicioFactura(s.id)}
+                        />
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-sm text-slate-200 truncate">{s.nombre_servicio}</span>
+                          <span className="block text-xs text-slate-500 capitalize">{(s.tipo_renovacion || '').replace('_', ' ')}</span>
+                        </span>
+                        <span className="font-mono text-sm text-emerald-400">
+                          {s.moneda === 'USD' ? '$' : 'Bs.'}{Number(s.precio).toFixed(2)}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <p className="text-xs text-slate-500 mt-2">
+                  Se preseleccionan los mensuales; los anuales solo si renuevan ese mes.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-indigo-900/30 border border-indigo-800/50">
+                <span className="text-sm text-slate-300">Total ({seleccionados.length} servicio{seleccionados.length === 1 ? '' : 's'})</span>
+                <span className="font-mono font-bold text-indigo-300">
+                  ${totalUSD.toFixed(2)}{totalBS > 0 ? ` + Bs.${totalBS.toFixed(2)}` : ''}
+                </span>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={cerrar} className="btn-secondary">Cancelar</button>
+                <button type="button" onClick={enviarFacturaWhatsApp} disabled={seleccionados.length === 0} className="btn-success">
+                  <MessageCircle className="w-4 h-4" /> WhatsApp
+                </button>
+                <button type="button" onClick={generarFactura} disabled={seleccionados.length === 0} className="btn-primary">
+                  <FileText className="w-4 h-4" /> Generar PDF
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )
+      })()}
+
       {/* Modal */}
-      {modal && (
+      {(modal === 'crear' || modal === 'editar') && (
         <Modal titulo={modal === 'crear' ? 'Nuevo Servicio' : 'Editar Servicio'} onClose={cerrar} ancho="max-w-xl">
           <form onSubmit={guardar} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
@@ -264,12 +441,25 @@ export default function Servicios() {
               <div>
                 <label className="label">Tipo de servicio</label>
                 <select className="input" value={form.tipo_servicio_id} onChange={e => {
-                  const tipo = tipos.find(t => t.id === e.target.value)
-                  setForm({...form, tipo_servicio_id: e.target.value, nombre_servicio: tipo?.nombre || form.nombre_servicio, precio: tipo?.precio_base?.toString() || form.precio})
+                  const v = e.target.value
+                  if (v === '__nuevo__') { setForm({...form, tipo_servicio_id: v}); return }
+                  const tipo = tipos.find(t => t.id === v)
+                  setForm({...form, tipo_servicio_id: v, nombre_servicio: tipo?.nombre || form.nombre_servicio, precio: tipo?.precio_base?.toString() || form.precio})
                 }}>
-                  <option value="">— Personalizado —</option>
+                  <option value="">— Sin tipo (personalizado) —</option>
+                  <option value="__nuevo__">➕ Otro… (crear nuevo tipo)</option>
                   {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
                 </select>
+                {form.tipo_servicio_id === '__nuevo__' && (
+                  <input
+                    className="input mt-2"
+                    value={nuevoTipo}
+                    onChange={e => setNuevoTipo(e.target.value)}
+                    placeholder="Nombre del nuevo tipo (ej: Hosting, Diseño...)"
+                    required
+                    autoFocus
+                  />
+                )}
               </div>
               <div>
                 <label className="label">Nombre del servicio *</label>

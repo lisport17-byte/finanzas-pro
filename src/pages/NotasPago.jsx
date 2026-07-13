@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react'
 import { notasPago as db, clientes as dbClientes, facturacion } from '../lib/queries'
 import useStore from '../store/useStore'
 import Modal from '../components/Modal'
-import { imprimirNotaPago } from '../lib/pdf'
+import { imprimirNotaPago, imprimirFacturaMensual, numeroFactura } from '../lib/pdf'
+import { abrirWhatsApp, mensajeFactura } from '../lib/whatsapp'
 import { fmtMonto } from '../lib/format'
-import { Plus, Search, CheckCircle, Trash2, FileText, Clock, Printer, Wallet } from 'lucide-react'
+import { Plus, Search, CheckCircle, Trash2, FileText, Clock, Printer, Wallet, Users, List, MessageCircle } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -14,6 +15,8 @@ const FORM_PAGO_INICIAL = {
   metodo_pago: 'transferencia',
   referencia: '',
   tasa_cambio: '',
+  tipo_pago: 'total',
+  monto_abono: '',
 }
 
 const ESTADO_BADGE = {
@@ -34,6 +37,7 @@ export default function NotasPago() {
   const [lista, setLista] = useState([])
   const [filtro, setFiltro] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('todos')
+  const [vista, setVista] = useState('lista') // 'lista' | 'clientes'
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(FORM_INICIAL)
   const [guardando, setGuardando] = useState(false)
@@ -86,8 +90,10 @@ export default function NotasPago() {
     e.preventDefault()
     setConfirmando(true)
     try {
-      const { error, servicioRenovado, notaPagada } = await facturacion.confirmarPago(
-        notaPagar, formPago, user.id
+      const { error, servicioRenovado, notaPagada, completo, saldoRestante } = await facturacion.confirmarPago(
+        notaPagar,
+        { ...formPago, monto_abono: formPago.tipo_pago === 'abono' ? formPago.monto_abono : null },
+        user.id
       )
       if (error) {
         addToast(
@@ -95,7 +101,7 @@ export default function NotasPago() {
           notaPagada ? 'warning' : 'error'
         )
         if (!notaPagada) return
-      } else {
+      } else if (completo) {
         addToast('Pago confirmado: nota pagada + ingreso registrado ✓', 'success')
         if (servicioRenovado) {
           addToast(
@@ -103,6 +109,8 @@ export default function NotasPago() {
             'success'
           )
         }
+      } else {
+        addToast(`Abono registrado ✓ — saldo restante: ${fmtMonto(saldoRestante, notaPagar.moneda)}`, 'success')
       }
       setNotaPagar(null)
       cargar()
@@ -126,8 +134,43 @@ export default function NotasPago() {
     return matchTexto && matchEstado
   })
 
+  const saldoDe = (n) => Number(n.monto) - Number(n.abonado || 0)
+
   const totalPendiente = lista.filter(n => ['pendiente', 'vencida'].includes(n.estado))
-    .reduce((s, n) => s + Number(n.monto), 0)
+    .reduce((s, n) => s + saldoDe(n), 0)
+
+  const saldoNotaPagar = notaPagar ? saldoDe(notaPagar) : 0
+
+  // Vista "Por cliente": agrupa las notas (sin anuladas) por cliente + mes de vencimiento
+  const grupos = (() => {
+    const mapa = {}
+    for (const n of filtrados) {
+      if (n.estado === 'anulada') continue
+      const periodo = (n.fecha_vencimiento || '').slice(0, 7) // yyyy-MM
+      const key = `${n.cliente_id}|${periodo}`
+      if (!mapa[key]) mapa[key] = { cliente_id: n.cliente_id, nombre: n.clientes?.nombre || '—', periodo, notas: [] }
+      mapa[key].notas.push(n)
+    }
+    return Object.values(mapa).sort((a, b) => b.periodo.localeCompare(a.periodo) || a.nombre.localeCompare(b.nombre))
+  })()
+
+  const notasAServicios = (notas) =>
+    notas.map((n) => ({ nombre_servicio: n.concepto, tipo_renovacion: '', precio: n.monto, moneda: n.moneda }))
+
+  const imprimirGrupo = (g) => {
+    const cliente = clientesLista.find((c) => c.id === g.cliente_id) || { id: g.cliente_id, nombre: g.nombre }
+    const ok = imprimirFacturaMensual(cliente, notasAServicios(g.notas), g.periodo, user?.email || '')
+    if (!ok) addToast('Permite las ventanas emergentes para imprimir', 'warning')
+  }
+
+  const whatsappGrupo = (g) => {
+    const cliente = clientesLista.find((c) => c.id === g.cliente_id)
+    const numero = cliente?.whatsapp || cliente?.telefono
+    if (!numero) { addToast(`${g.nombre} no tiene WhatsApp registrado. Agrégalo en Clientes.`, 'warning'); return }
+    const texto = mensajeFactura(cliente, notasAServicios(g.notas), g.periodo, numeroFactura(cliente, g.periodo))
+    abrirWhatsApp(numero, texto)
+    addToast('Chat abierto con el resumen. Adjunta el PDF desde WhatsApp 📎', 'info')
+  }
 
   return (
     <div className="space-y-4">
@@ -159,12 +202,97 @@ export default function NotasPago() {
           <option value="pagada">Pagada</option>
           <option value="anulada">Anulada</option>
         </select>
+        <div className="flex rounded-xl overflow-hidden border border-slate-700 flex-shrink-0">
+          <button
+            onClick={() => setVista('lista')}
+            className={`px-3 flex items-center gap-1.5 text-xs font-medium transition-colors ${
+              vista === 'lista' ? 'bg-indigo-600 text-white' : 'bg-slate-800/50 text-slate-400 hover:text-slate-200'
+            }`}
+            title="Ver nota por nota"
+          >
+            <List className="w-3.5 h-3.5" /> Notas
+          </button>
+          <button
+            onClick={() => setVista('clientes')}
+            className={`px-3 flex items-center gap-1.5 text-xs font-medium transition-colors ${
+              vista === 'clientes' ? 'bg-indigo-600 text-white' : 'bg-slate-800/50 text-slate-400 hover:text-slate-200'
+            }`}
+            title="Agrupar por cliente y mes"
+          >
+            <Users className="w-3.5 h-3.5" /> Por Cliente
+          </button>
+        </div>
         <button onClick={() => { setForm(FORM_INICIAL); setModal(true) }} className="btn-primary whitespace-nowrap">
           <Plus className="w-4 h-4" /> Nueva Nota
         </button>
       </div>
 
+      {/* Vista agrupada por cliente + mes */}
+      {vista === 'clientes' && (
+        <div className="card p-0 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-slate-800/50">
+                <tr>
+                  <th className="table-head text-left">Cliente</th>
+                  <th className="table-head text-left">Mes</th>
+                  <th className="table-head text-center hidden sm:table-cell">Notas</th>
+                  <th className="table-head text-right">Total</th>
+                  <th className="table-head text-right">Por cobrar</th>
+                  <th className="table-head text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {grupos.length === 0 ? (
+                  <tr><td colSpan={6} className="table-cell text-center text-slate-500 py-10">
+                    Sin notas para agrupar
+                  </td></tr>
+                ) : grupos.map((g) => {
+                  const totalUSD = g.notas.filter(n => n.moneda === 'USD').reduce((s, n) => s + Number(n.monto), 0)
+                  const totalBS = g.notas.filter(n => n.moneda === 'BS').reduce((s, n) => s + Number(n.monto), 0)
+                  const porCobrar = g.notas.filter(n => ['pendiente', 'vencida'].includes(n.estado))
+                    .reduce((s, n) => s + saldoDe(n), 0)
+                  const pagadas = g.notas.filter(n => n.estado === 'pagada').length
+                  return (
+                    <tr key={`${g.cliente_id}|${g.periodo}`} className="table-row">
+                      <td className="table-cell font-medium text-slate-200">{g.nombre}</td>
+                      <td className="table-cell text-slate-400 text-xs capitalize">
+                        {format(new Date(g.periodo + '-01T00:00:00'), 'MMMM yyyy', { locale: es })}
+                      </td>
+                      <td className="table-cell text-center hidden sm:table-cell text-xs text-slate-400">
+                        {g.notas.length} <span className="text-emerald-400">({pagadas} pagada{pagadas === 1 ? '' : 's'})</span>
+                      </td>
+                      <td className="table-cell text-right font-mono font-semibold text-slate-200">
+                        {totalUSD > 0 && `$${totalUSD.toFixed(2)}`}
+                        {totalUSD > 0 && totalBS > 0 && ' + '}
+                        {totalBS > 0 && `Bs.${totalBS.toFixed(2)}`}
+                      </td>
+                      <td className="table-cell text-right font-mono font-semibold">
+                        <span className={porCobrar > 0 ? 'text-amber-400' : 'text-emerald-400'}>
+                          {porCobrar > 0 ? `$${porCobrar.toFixed(2)}` : 'Al día ✓'}
+                        </span>
+                      </td>
+                      <td className="table-cell">
+                        <div className="flex items-center justify-end gap-1">
+                          <button onClick={() => imprimirGrupo(g)} className="p-1.5 text-slate-400 hover:text-brand-300 hover:bg-brand-500/10 rounded-lg" title="Factura consolidada del mes (PDF)">
+                            <Printer className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => whatsappGrupo(g)} className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-900/30 rounded-lg" title="Enviar resumen por WhatsApp">
+                            <MessageCircle className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Tabla */}
+      {vista === 'lista' && (
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -197,6 +325,11 @@ export default function NotasPago() {
                     <span className={n.estado === 'pagada' ? 'text-emerald-400' : 'text-amber-400'}>
                       {n.moneda === 'USD' ? '$' : 'Bs.'}{Number(n.monto).toFixed(2)}
                     </span>
+                    {Number(n.abonado) > 0 && n.estado !== 'pagada' && (
+                      <span className="block text-[10px] font-normal text-emerald-400">
+                        Abonado {fmtMonto(n.abonado, n.moneda)} · resta {fmtMonto(saldoDe(n), n.moneda)}
+                      </span>
+                    )}
                   </td>
                   <td className="table-cell text-center hidden sm:table-cell">
                     <span className={`flex items-center justify-center gap-1 text-xs ${
@@ -237,6 +370,7 @@ export default function NotasPago() {
           </table>
         </div>
       </div>
+      )}
 
       {/* Modal confirmar pago */}
       {notaPagar && (
@@ -249,10 +383,56 @@ export default function NotasPago() {
                 <p className="text-sm font-medium text-slate-200 truncate">{notaPagar.clientes?.nombre}</p>
                 <p className="text-xs text-slate-500 truncate">{notaPagar.concepto}</p>
               </div>
-              <p className="font-mono text-xl font-bold text-emerald-400 whitespace-nowrap">
-                {fmtMonto(notaPagar.monto, notaPagar.moneda)}
-              </p>
+              <div className="text-right whitespace-nowrap">
+                <p className="font-mono text-xl font-bold text-emerald-400">
+                  {fmtMonto(saldoNotaPagar, notaPagar.moneda)}
+                </p>
+                {Number(notaPagar.abonado) > 0 && (
+                  <p className="text-[10px] text-slate-500">
+                    de {fmtMonto(notaPagar.monto, notaPagar.moneda)} (abonado {fmtMonto(notaPagar.abonado, notaPagar.moneda)})
+                  </p>
+                )}
+              </div>
             </div>
+
+            {/* Pago total o abono parcial */}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setFormPago({ ...formPago, tipo_pago: 'total' })}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-colors ${
+                  formPago.tipo_pago === 'total'
+                    ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-300'
+                    : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Pago total ({fmtMonto(saldoNotaPagar, notaPagar.moneda)})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormPago({ ...formPago, tipo_pago: 'abono' })}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-colors ${
+                  formPago.tipo_pago === 'abono'
+                    ? 'bg-amber-600/20 border-amber-500/50 text-amber-300'
+                    : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Abono parcial
+              </button>
+            </div>
+
+            {formPago.tipo_pago === 'abono' && (
+              <div>
+                <label className="label">Monto del abono ({notaPagar.moneda}) *</label>
+                <input
+                  type="number" step="0.01" min="0.01" max={saldoNotaPagar} className="input"
+                  value={formPago.monto_abono}
+                  onChange={e => setFormPago({ ...formPago, monto_abono: e.target.value })}
+                  placeholder={`Máx. ${saldoNotaPagar.toFixed(2)}`}
+                  required autoFocus
+                />
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -275,7 +455,10 @@ export default function NotasPago() {
                     placeholder="Ej: 45.50" />
                   {formPago.tasa_cambio > 0 && (
                     <p className="text-xs text-slate-500 mt-1">
-                      ≈ {fmtMonto(Number(notaPagar.monto) / Number(formPago.tasa_cambio), 'USD')}
+                      ≈ {fmtMonto(
+                        (formPago.tipo_pago === 'abono' ? Number(formPago.monto_abono || 0) : saldoNotaPagar) / Number(formPago.tasa_cambio),
+                        'USD'
+                      )}
                     </p>
                   )}
                 </div>
@@ -290,10 +473,18 @@ export default function NotasPago() {
 
             <div className="flex items-start gap-2 text-xs text-slate-400 bg-brand-500/[0.08] border border-brand-500/20 rounded-xl p-3">
               <Wallet className="w-4 h-4 text-brand-300 flex-shrink-0 mt-0.5" />
-              <p>
-                Al confirmar: la nota pasa a <b>pagada</b>, se registra el <b>ingreso</b> automáticamente
-                {notaPagar.servicio_cliente_id && <> y la <b>renovación del servicio se extiende</b> al siguiente período</>}.
-              </p>
+              {formPago.tipo_pago === 'abono' ? (
+                <p>
+                  Al registrar el abono: se crea el <b>ingreso</b> por el monto abonado y la nota
+                  queda <b>pendiente por el saldo restante</b>. Cuando el abono complete el total,
+                  la nota pasa a pagada automáticamente.
+                </p>
+              ) : (
+                <p>
+                  Al confirmar: la nota pasa a <b>pagada</b>, se registra el <b>ingreso</b> automáticamente
+                  {notaPagar.servicio_cliente_id && <> y la <b>renovación del servicio se extiende</b> al siguiente período</>}.
+                </p>
+              )}
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
@@ -301,7 +492,7 @@ export default function NotasPago() {
               <button type="submit" disabled={confirmando} className="btn-success">
                 {confirmando
                   ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  : <><CheckCircle className="w-4 h-4" /> Confirmar Pago</>}
+                  : <><CheckCircle className="w-4 h-4" /> {formPago.tipo_pago === 'abono' ? 'Registrar Abono' : 'Confirmar Pago'}</>}
               </button>
             </div>
           </form>

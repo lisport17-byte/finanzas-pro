@@ -16,11 +16,14 @@ Sistema de control financiero empresarial PWA (Progressive Web App). Permite ges
 ## Estructura de archivos
 ```
 src/
+├── sw.js                # Service Worker propio (injectManifest): offline + Web Push
 ├── lib/
 │   ├── supabase.js      # Cliente Supabase (usa .env)
 │   ├── queries.js       # Todas las funciones de BD (incluye `reportes` para analítica)
 │   ├── format.js        # fmtUSD, fmtMonto, nombres de meses
 │   ├── export.js        # descargarCSV() — exportación compatible con Excel
+│   ├── push.js          # Suscripción Web Push del dispositivo (tabla push_suscripciones)
+│   ├── biometria.js     # Bloqueo con huella/rostro (WebAuthn, candado local)
 │   └── pdf.js           # imprimirNotaPago() — recibos imprimibles/PDF sin dependencias
 ├── store/
 │   └── useStore.js      # Estado global con Zustand
@@ -30,7 +33,9 @@ src/
 │   ├── Header.jsx       # Barra superior
 │   ├── BottomNav.jsx    # Navegación inferior móvil (estilo app nativa)
 │   ├── Modal.jsx        # Modal reutilizable (bottom sheet en móvil)
-│   └── Toast.jsx        # Notificaciones
+│   ├── Toast.jsx        # Notificaciones
+│   ├── RestablecerClave.jsx   # Nueva contraseña (evento PASSWORD_RECOVERY)
+│   └── BloqueoBiometrico.jsx  # Candado con huella al abrir la app
 ├── pages/
 │   ├── Login.jsx        # Autenticación (split-screen con panel de marca)
 │   ├── Dashboard.jsx    # Resumen financiero con gráficas (recharts)
@@ -56,6 +61,7 @@ src/
 ```bash
 VITE_SUPABASE_URL=https://tu-proyecto.supabase.co
 VITE_SUPABASE_ANON_KEY=tu_anon_key
+VITE_VAPID_PUBLIC_KEY=llave_publica_vapid   # Web Push (Fase 1)
 ```
 Para GitHub Actions: agregar en Settings → Secrets → Actions
 
@@ -69,6 +75,7 @@ Para GitHub Actions: agregar en Settings → Secrets → Actions
 | `ingresos` | Pagos recibidos (USD o Bs con tasa BCV) |
 | `gastos` | Gastos mensuales recurrentes o únicos |
 | `configuracion` | Parámetros del sistema |
+| `push_suscripciones` | Dispositivos suscritos a Web Push (ver `supabase-push.sql`) |
 
 Todas las tablas tienen RLS habilitado — solo el `user_id` dueño ve sus datos.
 
@@ -90,16 +97,35 @@ npm run preview  # Preview del build
 
 ## Facturación automática (ciclo de cobro recurrente)
 - Al abrir la app, `facturacion.generarNotasRenovacion(userId, 7)` (disparada una vez
-  por sesión desde `Layout.jsx`) crea notas de cobro para servicios activos
-  mensual/anual que vencen en ≤7 días o ya vencieron.
+  por sesión desde `Layout.jsx` y también al crear un servicio en Servicios) emite:
+  1. **Contrataciones**: servicios activos con `fecha_inicio` en el mes en curso
+     (incluye pago único) — la venta se cobra al inicio, vencimiento = `fecha_inicio`.
+  2. **Renovaciones**: servicios mensual/anual cuya `fecha_renovacion` cae dentro del
+     mes en curso o en los próximos 7 días.
 - **Idempotente**: la clave es `servicio_cliente_id + fecha_vencimiento` (el período).
   Las notas anuladas también cuentan como emitidas (no se regeneran).
-- `facturacion.confirmarPago(nota, datosPago, userId)` hace el ciclo completo en un paso:
-  marca la nota pagada → inserta el ingreso (con tasa BCV si es Bs) → extiende
-  `fecha_renovacion` del servicio al siguiente período (anclado al vencimiento, no a la
-  fecha de pago; solo si `fecha_renovacion <= nota.fecha_vencimiento` para evitar doble
-  extensión si ya se renovó manualmente).
-- UI: modal "Confirmar Pago Recibido" en NotasPago (botón ✓ de cada nota).
+- `facturacion.confirmarPago(nota, datosPago, userId)` acepta pago total o **abono
+  parcial** (`monto_abono`): acumula en `notas_pago.abonado` (migración
+  `supabase-abonos.sql`), registra el ingreso por lo pagado (concepto "Abono NP-…"),
+  y solo cuando `abonado >= monto` marca la nota pagada y extiende `fecha_renovacion`
+  del servicio al siguiente período (anclado al vencimiento; solo si
+  `fecha_renovacion <= nota.fecha_vencimiento` para evitar doble extensión).
+  El pago de una nota de contratación NO extiende la renovación (vencimiento < renovación).
+- UI en NotasPago: modal "Confirmar Pago" con toggle Pago total / Abono parcial;
+  vista conmutables "Notas" / "Por Cliente" (agrupa por cliente + mes de vencimiento,
+  con factura consolidada en PDF y envío por WhatsApp desde cada grupo).
+- Los totales "por cobrar" (Dashboard y CXC) descuentan lo abonado.
+
+## Factura mensual consolidada + envío por WhatsApp
+- Botón "Factura Mensual" en Servicios: modal para elegir cliente, mes y servicios
+  (preselección: mensuales siempre; anuales solo si renuevan ese mes; pago único solo
+  si inició ese mes). Genera el PDF con `imprimirFacturaMensual()` en `src/lib/pdf.js`.
+- Número determinístico `FAC-YYYYMM-XXXXXX` (`numeroFactura()`): mismo cliente+mes = mismo número.
+- Envío por WhatsApp vía `wa.me` (`src/lib/whatsapp.js`): abre el chat del cliente con el
+  resumen prellenado (servicios + total); el PDF se adjunta manualmente en el chat.
+  `normalizarNumero()` asume Venezuela (+58) si el número empieza por 0.
+- Campo `clientes.whatsapp` (migración en `supabase-whatsapp.sql`); si falta, se usa `telefono`.
+- Envío 100% automático con PDF adjunto requiere la API de WhatsApp Business (Meta) — pendiente.
 
 ## Lógica de renovaciones
 - `fecha_renovacion` se calcula automáticamente: inicio + 1 mes (mensual) o + 1 año (anual)
@@ -135,10 +161,23 @@ npm run preview  # Preview del build
 7. **No editar archivos con regex de PowerShell** (`-replace` + `Set-Content`): corrompe
    los acentos UTF-8. Usar las herramientas de edición del agente.
 
+## Fase 1 implementada (v2.1) — Notificaciones y acceso
+- ✅ **Web Push**: SW propio (`src/sw.js`, estrategia `injectManifest` en vite.config).
+  La Edge Function `supabase/functions/enviar-recordatorios/index.ts` corre a diario
+  (pg_cron, 12:00 UTC) y envía un resumen de vencimientos por usuario (VAPID).
+  Protegida con header `x-cron-secret`. Suscripción por dispositivo en Alertas.
+- ✅ **Recuperar contraseña**: enlace en Login → email → evento `PASSWORD_RECOVERY`
+  → pantalla `RestablecerClave`. `redirectTo` apunta a origin+pathname (compatible
+  con HashRouter/GitHub Pages).
+- ✅ **Bloqueo con huella**: WebAuthn como candado local (no reemplaza el login).
+  Flag y credencial en localStorage; toggle en Alertas.
+- Ver `GUIA_FASE1_NOTIFICACIONES.md` para la configuración (llaves VAPID, secrets).
+
 ## Próximas funcionalidades a implementar
 1. **WhatsApp bot**: Notificaciones automáticas a clientes sobre vencimientos
 2. **Multi-moneda**: Soporte para otras monedas (EUR, COP, etc.)
 3. **Email reminders**: Avisos automáticos vía Supabase Edge Functions
+4. **Fase 2 — Capacitor**: empaquetar como APK nativo para Play Store (FCM)
 
 ## Seguridad
 - Row Level Security (RLS) activo en Supabase — datos completamente aislados por usuario

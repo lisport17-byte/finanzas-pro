@@ -3,7 +3,8 @@ import { clientes as db, serviciosClientes as dbServicios, notasPago as dbNotas,
 import useStore from '../store/useStore'
 import Modal from '../components/Modal'
 import { imprimirEstadoCuenta, abrirVentanaImpresion } from '../lib/pdf'
-import { Plus, Search, Edit2, Trash2, UserCheck, UserX, Phone, Mail, Building, FileText } from 'lucide-react'
+import { abrirWhatsApp } from '../lib/whatsapp'
+import { Plus, Search, Edit2, Trash2, UserCheck, UserX, Phone, Mail, Building, FileText, MessageCircle } from 'lucide-react'
 
 const ESTADO_BADGE = {
   activo:     'badge-active',
@@ -12,7 +13,7 @@ const ESTADO_BADGE = {
 }
 
 const FORM_INICIAL = {
-  nombre: '', email: '', telefono: '', empresa: '', pais: 'Venezuela', notas: '', estado: 'activo'
+  nombre: '', email: '', telefono: '', whatsapp: '', empresa: '', pais: 'Venezuela', notas: '', estado: 'activo'
 }
 
 export default function Clientes() {
@@ -62,7 +63,7 @@ export default function Clientes() {
   }
 
   const abrirEditar = (c) => {
-    setForm({ nombre: c.nombre, email: c.email || '', telefono: c.telefono || '',
+    setForm({ nombre: c.nombre, email: c.email || '', telefono: c.telefono || '', whatsapp: c.whatsapp || '',
       empresa: c.empresa || '', pais: c.pais || 'Venezuela', notas: c.notas || '', estado: c.estado })
     setSeleccionado(c)
     setModal('editar')
@@ -186,6 +187,11 @@ export default function Clientes() {
                             <Phone className="w-3 h-3" /> {c.telefono}
                           </p>
                         )}
+                        {c.whatsapp && (
+                          <p className="flex items-center gap-1 text-xs text-emerald-400">
+                            <MessageCircle className="w-3 h-3" /> {c.whatsapp}
+                          </p>
+                        )}
                       </div>
                     </td>
                     <td className="table-cell hidden lg:table-cell text-slate-400">
@@ -202,10 +208,19 @@ export default function Clientes() {
                     </td>
                     <td className="table-cell">
                       <div className="flex items-center justify-end gap-1">
+                        {(c.whatsapp || c.telefono) && (
+                          <button
+                            onClick={() => abrirWhatsApp(c.whatsapp || c.telefono, `Hola ${c.nombre} 👋`)}
+                            className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-900/30 rounded-lg transition-colors"
+                            title="Abrir chat de WhatsApp"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <button
                           onClick={() => estadoCuenta(c)}
                           className="p-1.5 text-slate-400 hover:text-brand-300 hover:bg-brand-500/10 rounded-lg transition-colors"
-                          title="Estado de cuenta (PDF)"
+                          title="Estado de cuenta histórico (PDF) — todo el historial del cliente"
                         >
                           <FileText className="w-3.5 h-3.5" />
                         </button>
@@ -258,8 +273,12 @@ export default function Clientes() {
                 <input type="email" className="input" value={form.email} onChange={e => setForm({...form, email: e.target.value})} placeholder="juan@email.com" />
               </div>
               <div>
-                <label className="label">Teléfono / WhatsApp</label>
+                <label className="label">Teléfono</label>
                 <input className="input" value={form.telefono} onChange={e => setForm({...form, telefono: e.target.value})} placeholder="+58 412..." />
+              </div>
+              <div>
+                <label className="label">WhatsApp (para envío de facturas)</label>
+                <input className="input" value={form.whatsapp} onChange={e => setForm({...form, whatsapp: e.target.value})} placeholder="+58 412 1234567" />
               </div>
               <div>
                 <label className="label">Empresa</label>
@@ -269,7 +288,7 @@ export default function Clientes() {
                 <label className="label">País</label>
                 <input className="input" value={form.pais} onChange={e => setForm({...form, pais: e.target.value})} placeholder="Venezuela" />
               </div>
-              <div className="col-span-2">
+              <div>
                 <label className="label">Estado</label>
                 <select className="input" value={form.estado} onChange={e => setForm({...form, estado: e.target.value})}>
                   <option value="activo">Activo</option>

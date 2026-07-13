@@ -26,8 +26,14 @@ export const auth = {
 
   getUser: () => supabase.auth.getUser(),
 
+  /** Envía el correo de recuperación; el enlace vuelve a esta misma app */
   resetPassword: (email) =>
-    supabase.auth.resetPasswordForEmail(email),
+    supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname,
+    }),
+
+  /** Cambia la contraseña del usuario ya autenticado (flujo de recuperación) */
+  actualizarPassword: (password) => supabase.auth.updateUser({ password }),
 }
 
 // ─── INICIALIZACIÓN ────────────────────────────────────────────────────────────
@@ -337,28 +343,51 @@ export const facturacion = {
    */
   generarNotasRenovacion: async (userId, diasAnticipacion = 7) => {
     const hoy = new Date()
-    const limite = fmtFecha(new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() + diasAnticipacion), 'yyyy-MM-dd')
+    // Regla de facturación: desde el día 1 del mes ya se emiten las CXC de
+    // TODOS los servicios que renuevan dentro del mes en curso (aunque el
+    // período aún no venza). Además cubre los próximos `diasAnticipacion`
+    // días, para renovaciones de los primeros días del mes siguiente.
+    const finDeMes = fmtFecha(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0), 'yyyy-MM-dd')
+    const inicioMes = fmtFecha(new Date(hoy.getFullYear(), hoy.getMonth(), 1), 'yyyy-MM-dd')
+    const porAnticipacion = fmtFecha(new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() + diasAnticipacion), 'yyyy-MM-dd')
+    const limite = porAnticipacion > finDeMes ? porAnticipacion : finDeMes
 
-    const { data: servicios } = await supabase
-      .from('servicios_clientes')
-      .select('id, cliente_id, nombre_servicio, precio, moneda, tipo_renovacion, fecha_renovacion')
-      .eq('estado', 'activo')
-      .in('tipo_renovacion', ['mensual', 'anual'])
-      .lte('fecha_renovacion', limite)
+    const [{ data: renovaciones }, { data: contratados }] = await Promise.all([
+      supabase
+        .from('servicios_clientes')
+        .select('id, cliente_id, nombre_servicio, precio, moneda, tipo_renovacion, fecha_renovacion')
+        .eq('estado', 'activo')
+        .in('tipo_renovacion', ['mensual', 'anual'])
+        .lte('fecha_renovacion', limite),
+      // Primer período: servicios contratados este mes (incluye pago único) —
+      // la venta se cobra al inicio, no hay que esperar a la renovación
+      supabase
+        .from('servicios_clientes')
+        .select('id, cliente_id, nombre_servicio, precio, moneda, tipo_renovacion, fecha_inicio')
+        .eq('estado', 'activo')
+        .gte('fecha_inicio', inicioMes)
+        .lte('fecha_inicio', finDeMes),
+    ])
 
-    if (!servicios?.length) return { creadas: 0 }
+    const ids = [...new Set([...(renovaciones || []), ...(contratados || [])].map((s) => s.id))]
+    if (!ids.length) return { creadas: 0 }
 
     // Notas ya emitidas para esos servicios (cualquier estado, incluso anuladas:
     // si el usuario anuló una, no se la volvemos a generar)
     const { data: notas } = await supabase
       .from('notas_pago')
       .select('servicio_cliente_id, fecha_vencimiento')
-      .in('servicio_cliente_id', servicios.map((s) => s.id))
+      .in('servicio_cliente_id', ids)
 
     const yaEmitidas = new Set((notas || []).map((n) => `${n.servicio_cliente_id}|${n.fecha_vencimiento}`))
-    const porFacturar = servicios.filter(
-      (s) => Number(s.precio) > 0 && !yaEmitidas.has(`${s.id}|${s.fecha_renovacion}`)
-    )
+    const porFacturar = [
+      ...(contratados || [])
+        .filter((s) => Number(s.precio) > 0 && !yaEmitidas.has(`${s.id}|${s.fecha_inicio}`))
+        .map((s) => ({ ...s, concepto: `Contratación — ${s.nombre_servicio}`, vence: s.fecha_inicio })),
+      ...(renovaciones || [])
+        .filter((s) => Number(s.precio) > 0 && !yaEmitidas.has(`${s.id}|${s.fecha_renovacion}`))
+        .map((s) => ({ ...s, concepto: `Renovación ${s.tipo_renovacion} — ${s.nombre_servicio}`, vence: s.fecha_renovacion })),
+    ]
 
     let creadas = 0
     // Secuencial para que la numeración NP-AAAA-NNN no se repita
@@ -366,11 +395,11 @@ export const facturacion = {
       const { error } = await notasPago.crear({
         cliente_id: s.cliente_id,
         servicio_cliente_id: s.id,
-        concepto: `Renovación ${s.tipo_renovacion} — ${s.nombre_servicio}`,
+        concepto: s.concepto,
         monto: Number(s.precio),
         moneda: s.moneda,
         fecha_emision: fmtFecha(hoy, 'yyyy-MM-dd'),
-        fecha_vencimiento: s.fecha_renovacion,
+        fecha_vencimiento: s.vence,
         estado: 'pendiente',
         user_id: userId,
       })
@@ -380,34 +409,47 @@ export const facturacion = {
   },
 
   /**
-   * Confirma el pago de una nota en un solo paso:
-   * 1) marca la nota como pagada
-   * 2) registra el ingreso (con tasa BCV si fue en Bs)
-   * 3) si la nota viene de un servicio, extiende su fecha_renovacion al
-   *    siguiente período (anclado al vencimiento, no a la fecha de pago)
+   * Confirma un pago (total o abono parcial) de una nota en un solo paso:
+   * 1) acumula el abono; si cubre el monto, marca la nota como pagada
+   * 2) registra el ingreso por lo pagado (con tasa BCV si fue en Bs)
+   * 3) si quedó pagada y viene de un servicio, extiende su fecha_renovacion
+   *    al siguiente período (anclado al vencimiento, no a la fecha de pago)
+   * `monto_abono`: null/vacío = pago total del saldo restante.
    */
-  confirmarPago: async (nota, { fecha_pago, metodo_pago, referencia, tasa_cambio }, userId) => {
+  confirmarPago: async (nota, { fecha_pago, metodo_pago, referencia, tasa_cambio, monto_abono }, userId) => {
+    const total = Number(nota.monto)
+    const abonadoPrevio = Number(nota.abonado || 0)
+    const saldo = total - abonadoPrevio
+    const pago = monto_abono ? Math.min(Number(monto_abono), saldo) : saldo
+    const nuevoAbonado = abonadoPrevio + pago
+    const completo = nuevoAbonado >= total - 0.009
+
     const { error: errNota } = await supabase
-      .from('notas_pago').update({ estado: 'pagada' }).eq('id', nota.id)
+      .from('notas_pago')
+      .update({ abonado: nuevoAbonado, ...(completo ? { estado: 'pagada' } : {}) })
+      .eq('id', nota.id)
     if (errNota) return { error: errNota }
 
-    const monto = Number(nota.monto)
     const esBS = nota.moneda === 'BS'
     const tasa = tasa_cambio ? Number(tasa_cambio) : null
+    const esAbono = !completo || abonadoPrevio > 0
     const { error: errIngreso } = await supabase.from('ingresos').insert(limpiar({
       cliente_id: nota.cliente_id,
       nota_pago_id: nota.id,
-      concepto: `${nota.numero || 'Pago'} — ${nota.concepto}`,
-      monto,
+      concepto: `${esAbono ? 'Abono ' : ''}${nota.numero || 'Pago'} — ${nota.concepto}`,
+      monto: pago,
       moneda: nota.moneda,
       tasa_cambio: esBS ? tasa : null,
-      monto_usd: esBS ? (tasa ? Number((monto / tasa).toFixed(2)) : null) : monto,
+      monto_usd: esBS ? (tasa ? Number((pago / tasa).toFixed(2)) : null) : pago,
       fecha_pago,
       metodo_pago,
       referencia: referencia || null,
       user_id: userId,
     }))
-    if (errIngreso) return { error: errIngreso, notaPagada: true }
+    if (errIngreso) return { error: errIngreso, notaPagada: completo }
+
+    // Si fue solo un abono parcial, no se renueva el servicio todavía
+    if (!completo) return { error: null, completo: false, saldoRestante: total - nuevoAbonado }
 
     // Extender la renovación del servicio vinculado
     let servicioRenovado = null
@@ -430,7 +472,7 @@ export const facturacion = {
         if (!errSvc) servicioRenovado = nuevaFecha
       }
     }
-    return { error: null, servicioRenovado }
+    return { error: null, servicioRenovado, completo: true, saldoRestante: 0 }
   },
 }
 
@@ -576,7 +618,7 @@ export async function obtenerResumenDashboard() {
   ] = await Promise.all([
     supabase.from('clientes').select('id', { count: 'exact', head: true }),
     supabase.from('clientes').select('id', { count: 'exact', head: true }).eq('estado', 'activo'),
-    supabase.from('notas_pago').select('monto, moneda').in('estado', ['pendiente', 'vencida']),
+    supabase.from('notas_pago').select('monto, moneda, abonado').in('estado', ['pendiente', 'vencida']),
     supabase.from('servicios_clientes')
       .select('id, nombre_servicio, fecha_renovacion, clientes(nombre)')
       .eq('estado', 'activo')
@@ -592,7 +634,7 @@ export async function obtenerResumenDashboard() {
     gastos.totalMes(mes, anio),
   ])
 
-  const totalCobrar = notasPendientes?.reduce((s, n) => s + Number(n.monto), 0) || 0
+  const totalCobrar = notasPendientes?.reduce((s, n) => s + Number(n.monto) - Number(n.abonado || 0), 0) || 0
 
   return {
     totalClientes: totalClientes || 0,

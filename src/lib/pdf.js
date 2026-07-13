@@ -135,6 +135,92 @@ export function imprimirNotaPago(nota, emisorEmail = '') {
   return abrirImpresion(`Nota ${nota.numero || ''}`, cuerpo)
 }
 
+const RENOVACION_LABEL = { mensual: 'Mensual', anual: 'Anual', pago_unico: 'Pago único' }
+
+/** Número determinístico de la factura mensual: mismo cliente + mes = mismo número. */
+export function numeroFactura(cliente, periodo) {
+  const [anio, mes] = periodo.split('-')
+  return `FAC-${anio}${mes}-${String(cliente.id || '').replace(/-/g, '').slice(0, 6).toUpperCase()}`
+}
+
+/**
+ * Imprime la factura mensual consolidada de un cliente: todos sus servicios
+ * del período en un solo documento con el monto total (USD y Bs por separado).
+ * @param {object} cliente  - registro de `clientes`
+ * @param {array}  servicios - servicios a facturar (de `servicios_clientes`)
+ * @param {string} periodo  - mes facturado en formato 'yyyy-MM'
+ */
+export function imprimirFacturaMensual(cliente, servicios = [], periodo, emisorEmail = '', win = null) {
+  const nombreMes = new Date(periodo + '-01T00:00:00')
+    .toLocaleDateString('es-VE', { month: 'long', year: 'numeric' })
+  const numero = numeroFactura(cliente, periodo)
+  const totalUSD = servicios.filter((s) => s.moneda === 'USD').reduce((a, s) => a + Number(s.precio), 0)
+  const totalBS  = servicios.filter((s) => s.moneda === 'BS').reduce((a, s) => a + Number(s.precio), 0)
+
+  const cuerpo = `
+  <div class="header">
+    <div class="brand">
+      <div class="brand-mark">F</div>
+      <div>
+        <h1>Finanzas<span>Pro</span></h1>
+        <p>Servicios Profesionales</p>
+      </div>
+    </div>
+    <div class="doc-info">
+      <p class="tipo">Factura Mensual</p>
+      <p class="numero">${numero}</p>
+    </div>
+  </div>
+
+  <div class="meta">
+    <div class="meta-box">
+      <p class="titulo">Cliente</p>
+      <p class="valor">${cliente.nombre}</p>
+      ${cliente.empresa ? `<p class="sub">${cliente.empresa}</p>` : ''}
+      ${cliente.email ? `<p class="sub">${cliente.email}</p>` : ''}
+      ${cliente.telefono ? `<p class="sub">${cliente.telefono}</p>` : ''}
+    </div>
+    <div class="meta-box">
+      <p class="titulo">Detalle</p>
+      <p class="valor" style="text-transform: capitalize;">Período: ${nombreMes}</p>
+      <p class="sub">Emitida: ${new Date().toLocaleDateString('es-VE', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+      ${emisorEmail ? `<p class="sub">Emitido por: ${emisorEmail}</p>` : ''}
+    </div>
+  </div>
+
+  <table>
+    <thead><tr><th>Servicio</th><th>Modalidad</th><th class="right">Monto</th></tr></thead>
+    <tbody>
+      ${servicios.map((s) => `<tr>
+        <td>
+          <strong>${s.nombre_servicio}</strong>
+          ${s.descripcion ? `<br><span style="font-size: 12px; color: #64748b;">${s.descripcion}</span>` : ''}
+        </td>
+        <td>${RENOVACION_LABEL[s.tipo_renovacion] || s.tipo_renovacion}</td>
+        <td class="right" style="font-family: Consolas, monospace; font-weight: 700;">${fmtMonto(s.precio, s.moneda)}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+
+  <div class="total-row" style="gap: 12px;">
+    ${totalBS > 0 ? `
+    <div class="total-box" style="background: #f1f5f9; color: #1e293b;">
+      <p class="label" style="opacity: 1; color: #64748b;">Total en Bolívares</p>
+      <p class="monto">${fmtMonto(totalBS, 'BS')}</p>
+    </div>` : ''}
+    <div class="total-box">
+      <p class="label">Total a Pagar${totalBS > 0 ? ' (USD)' : ''}</p>
+      <p class="monto">${fmtMonto(totalUSD, 'USD')}</p>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>Documento generado por FinanzasPro</span>
+    <span>${servicios.length} servicio(s) facturado(s)</span>
+  </div>`
+  return abrirImpresion(`Factura ${numero} — ${cliente.nombre}`, cuerpo, win)
+}
+
 const ESTADO_NOTA_COLOR = {
   pendiente: '#b45309', pagada: '#047857', vencida: '#b91c1c', anulada: '#475569',
 }
