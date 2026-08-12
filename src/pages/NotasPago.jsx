@@ -274,11 +274,11 @@ export default function NotasPago() {
                       </td>
                       <td className="table-cell">
                         <div className="flex items-center justify-end gap-1">
-                          <button onClick={() => imprimirGrupo(g)} className="p-1.5 text-slate-400 hover:text-brand-300 hover:bg-brand-500/10 rounded-lg" title="Factura consolidada del mes (PDF)">
-                            <Printer className="w-3.5 h-3.5" />
+                          <button onClick={() => imprimirGrupo(g)} className="p-2.5 sm:p-1.5 text-slate-400 hover:text-brand-300 hover:bg-brand-500/10 rounded-lg" title="Factura consolidada del mes (PDF)">
+                            <Printer className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                           </button>
-                          <button onClick={() => whatsappGrupo(g)} className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-900/30 rounded-lg" title="Enviar resumen por WhatsApp">
-                            <MessageCircle className="w-3.5 h-3.5" />
+                          <button onClick={() => whatsappGrupo(g)} className="p-2.5 sm:p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-900/30 rounded-lg" title="Enviar resumen por WhatsApp">
+                            <MessageCircle className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                           </button>
                         </div>
                       </td>
@@ -349,18 +349,18 @@ export default function NotasPago() {
                           const ok = imprimirNotaPago(n, user?.email)
                           if (!ok) addToast('Permite las ventanas emergentes para imprimir', 'warning')
                         }}
-                        className="p-1.5 text-slate-400 hover:text-brand-300 hover:bg-brand-500/10 rounded-lg"
+                        className="p-2.5 sm:p-1.5 text-slate-400 hover:text-brand-300 hover:bg-brand-500/10 rounded-lg"
                         title="Imprimir / Guardar PDF"
                       >
-                        <Printer className="w-3.5 h-3.5" />
+                        <Printer className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                       </button>
                       {n.estado !== 'pagada' && n.estado !== 'anulada' && (
-                        <button onClick={() => abrirConfirmarPago(n)} className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-900/30 rounded-lg" title="Confirmar pago recibido">
-                          <CheckCircle className="w-3.5 h-3.5" />
+                        <button onClick={() => abrirConfirmarPago(n)} className="p-2.5 sm:p-1.5 text-emerald-500 sm:text-slate-400 hover:text-emerald-400 hover:bg-emerald-900/30 rounded-lg" title="Confirmar pago recibido">
+                          <CheckCircle className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                         </button>
                       )}
-                      <button onClick={() => eliminar(n)} className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-900/30 rounded-lg" title="Eliminar">
-                        <Trash2 className="w-3.5 h-3.5" />
+                      <button onClick={() => eliminar(n)} className="p-2.5 sm:p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-900/30 rounded-lg" title="Eliminar">
+                        <Trash2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                       </button>
                     </div>
                   </td>
