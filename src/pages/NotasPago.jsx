@@ -134,20 +134,30 @@ export default function NotasPago() {
     lista.map((n) => (n.fecha_vencimiento || '').slice(0, 7)).filter(Boolean)
   )].sort().reverse()
 
+  // ¿La nota pertenece a la vista del mes seleccionado?
+  // - Las del mes elegido: siempre (cualquier estado).
+  // - Las pendientes/vencidas de meses ANTERIORES: también (deuda atrasada
+  //   nunca se oculta).
+  // - Las de meses FUTUROS: no — se facturan por adelantado (ej. al renovar
+  //   desde Alertas) pero pertenecen a su propio mes.
+  const enMesSeleccionado = (n) => {
+    if (filtroMes === 'todos') return true
+    const periodo = (n.fecha_vencimiento || '').slice(0, 7)
+    return periodo === filtroMes
+      || (periodo < filtroMes && ['pendiente', 'vencida'].includes(n.estado))
+  }
+
   const filtrados = lista.filter((n) => {
     const matchTexto = `${n.clientes?.nombre} ${n.numero} ${n.concepto}`.toLowerCase().includes(filtro.toLowerCase())
     const matchEstado = filtroEstado === 'todos' || n.estado === filtroEstado
-    // Filtro de mes (por vencimiento). Lo pendiente/vencido NUNCA se oculta:
-    // es dinero por cobrar aunque sea de un mes anterior.
-    const matchMes = filtroMes === 'todos'
-      || ['pendiente', 'vencida'].includes(n.estado)
-      || (n.fecha_vencimiento || '').startsWith(filtroMes)
-    return matchTexto && matchEstado && matchMes
+    return matchTexto && matchEstado && enMesSeleccionado(n)
   })
 
   const saldoDe = (n) => Number(n.monto) - Number(n.abonado || 0)
 
-  const totalPendiente = lista.filter(n => ['pendiente', 'vencida'].includes(n.estado))
+  // Los contadores de arriba siguen al mes seleccionado (igual que la lista)
+  const notasMes = lista.filter(enMesSeleccionado)
+  const totalPendiente = notasMes.filter(n => ['pendiente', 'vencida'].includes(n.estado))
     .reduce((s, n) => s + saldoDe(n), 0)
 
   const saldoNotaPagar = notaPagar ? saldoDe(notaPagar) : 0
@@ -196,9 +206,9 @@ export default function NotasPago() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: 'Total por cobrar', valor: `$${totalPendiente.toFixed(2)}`, color: 'text-amber-400' },
-          { label: 'Pendientes', valor: lista.filter(n => n.estado === 'pendiente').length, color: 'text-slate-300' },
-          { label: 'Vencidas', valor: lista.filter(n => n.estado === 'vencida').length, color: 'text-red-400' },
-          { label: 'Pagadas', valor: lista.filter(n => n.estado === 'pagada').length, color: 'text-emerald-400' },
+          { label: 'Pendientes', valor: notasMes.filter(n => n.estado === 'pendiente').length, color: 'text-slate-300' },
+          { label: 'Vencidas', valor: notasMes.filter(n => n.estado === 'vencida').length, color: 'text-red-400' },
+          { label: 'Pagadas', valor: notasMes.filter(n => n.estado === 'pagada').length, color: 'text-emerald-400' },
         ].map(({ label, valor, color }) => (
           <div key={label} className="card text-center py-3">
             <p className={`text-xl font-bold ${color}`}>{valor}</p>
