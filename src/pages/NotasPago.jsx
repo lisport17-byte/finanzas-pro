@@ -37,6 +37,7 @@ export default function NotasPago() {
   const [lista, setLista] = useState([])
   const [filtro, setFiltro] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('todos')
+  const [filtroMes, setFiltroMes] = useState(format(new Date(), 'yyyy-MM'))
   const [vista, setVista] = useState('lista') // 'lista' | 'clientes'
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(FORM_INICIAL)
@@ -128,10 +129,20 @@ export default function NotasPago() {
     cargar()
   }
 
+  // Meses disponibles según los vencimientos registrados (más reciente primero)
+  const mesesDisponibles = [...new Set(
+    lista.map((n) => (n.fecha_vencimiento || '').slice(0, 7)).filter(Boolean)
+  )].sort().reverse()
+
   const filtrados = lista.filter((n) => {
     const matchTexto = `${n.clientes?.nombre} ${n.numero} ${n.concepto}`.toLowerCase().includes(filtro.toLowerCase())
     const matchEstado = filtroEstado === 'todos' || n.estado === filtroEstado
-    return matchTexto && matchEstado
+    // Filtro de mes (por vencimiento). Lo pendiente/vencido NUNCA se oculta:
+    // es dinero por cobrar aunque sea de un mes anterior.
+    const matchMes = filtroMes === 'todos'
+      || ['pendiente', 'vencida'].includes(n.estado)
+      || (n.fecha_vencimiento || '').startsWith(filtroMes)
+    return matchTexto && matchEstado && matchMes
   })
 
   const saldoDe = (n) => Number(n.monto) - Number(n.abonado || 0)
@@ -156,6 +167,13 @@ export default function NotasPago() {
 
   const notasAServicios = (notas) =>
     notas.map((n) => ({ nombre_servicio: n.concepto, tipo_renovacion: '', precio: n.monto, moneda: n.moneda }))
+
+  const totalesGrupo = (g) => ({
+    totalUSD: g.notas.filter(n => n.moneda === 'USD').reduce((s, n) => s + Number(n.monto), 0),
+    totalBS: g.notas.filter(n => n.moneda === 'BS').reduce((s, n) => s + Number(n.monto), 0),
+    porCobrar: g.notas.filter(n => ['pendiente', 'vencida'].includes(n.estado)).reduce((s, n) => s + saldoDe(n), 0),
+    pagadas: g.notas.filter(n => n.estado === 'pagada').length,
+  })
 
   const imprimirGrupo = (g) => {
     const cliente = clientesLista.find((c) => c.id === g.cliente_id) || { id: g.cliente_id, nombre: g.nombre }
@@ -190,47 +208,99 @@ export default function NotasPago() {
       </div>
 
       {/* Barra de filtros */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className="input pl-9" placeholder="Buscar nota, cliente o concepto..." value={filtro} onChange={e => setFiltro(e.target.value)} />
-        </div>
-        <select className="input w-auto" value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)}>
-          <option value="todos">Todos los estados</option>
-          <option value="pendiente">Pendiente</option>
-          <option value="vencida">Vencida</option>
-          <option value="pagada">Pagada</option>
-          <option value="anulada">Anulada</option>
-        </select>
-        <div className="flex rounded-xl overflow-hidden border border-slate-700 flex-shrink-0">
-          <button
-            onClick={() => setVista('lista')}
-            className={`px-3 flex items-center gap-1.5 text-xs font-medium transition-colors ${
-              vista === 'lista' ? 'bg-indigo-600 text-white' : 'bg-slate-800/50 text-slate-400 hover:text-slate-200'
-            }`}
-            title="Ver nota por nota"
-          >
-            <List className="w-3.5 h-3.5" /> Notas
-          </button>
-          <button
-            onClick={() => setVista('clientes')}
-            className={`px-3 flex items-center gap-1.5 text-xs font-medium transition-colors ${
-              vista === 'clientes' ? 'bg-indigo-600 text-white' : 'bg-slate-800/50 text-slate-400 hover:text-slate-200'
-            }`}
-            title="Agrupar por cliente y mes"
-          >
-            <Users className="w-3.5 h-3.5" /> Por Cliente
+      <div className="space-y-3">
+        <div className="flex gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+            <input className="input pl-9" placeholder="Buscar nota, cliente o concepto..." value={filtro} onChange={e => setFiltro(e.target.value)} />
+          </div>
+          <button onClick={() => { setForm(FORM_INICIAL); setModal(true) }} className="btn-primary whitespace-nowrap">
+            <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Nueva Nota</span><span className="sm:hidden">Nueva</span>
           </button>
         </div>
-        <button onClick={() => { setForm(FORM_INICIAL); setModal(true) }} className="btn-primary whitespace-nowrap">
-          <Plus className="w-4 h-4" /> Nueva Nota
-        </button>
+        <div className="flex flex-wrap items-stretch gap-2">
+          <select className="input !w-auto flex-1 sm:flex-none capitalize" value={filtroMes} onChange={e => setFiltroMes(e.target.value)}>
+            <option value="todos">Todos los meses</option>
+            {mesesDisponibles.map((m) => (
+              <option key={m} value={m} className="capitalize">
+                {format(new Date(m + '-01T00:00:00'), 'MMMM yyyy', { locale: es })}
+              </option>
+            ))}
+          </select>
+          <select className="input !w-auto flex-1 sm:flex-none" value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)}>
+            <option value="todos">Todos los estados</option>
+            <option value="pendiente">Pendiente</option>
+            <option value="vencida">Vencida</option>
+            <option value="pagada">Pagada</option>
+            <option value="anulada">Anulada</option>
+          </select>
+          <div className="flex rounded-xl overflow-hidden border border-slate-700 flex-shrink-0">
+            <button
+              onClick={() => setVista('lista')}
+              className={`px-3 py-2 flex items-center gap-1.5 text-xs font-medium transition-colors ${
+                vista === 'lista' ? 'bg-indigo-600 text-white' : 'bg-slate-800/50 text-slate-400 hover:text-slate-200'
+              }`}
+              title="Ver nota por nota"
+            >
+              <List className="w-3.5 h-3.5" /> Notas
+            </button>
+            <button
+              onClick={() => setVista('clientes')}
+              className={`px-3 py-2 flex items-center gap-1.5 text-xs font-medium transition-colors ${
+                vista === 'clientes' ? 'bg-indigo-600 text-white' : 'bg-slate-800/50 text-slate-400 hover:text-slate-200'
+              }`}
+              title="Agrupar por cliente y mes"
+            >
+              <Users className="w-3.5 h-3.5" /> Por Cliente
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Vista agrupada por cliente + mes */}
       {vista === 'clientes' && (
         <div className="card p-0 overflow-hidden">
-          <div className="overflow-x-auto">
+          {/* Móvil: tarjetas por cliente */}
+          <div className="sm:hidden divide-y divide-white/[0.06]">
+            {grupos.length === 0 ? (
+              <p className="text-center text-slate-500 py-10 text-sm">Sin notas para agrupar</p>
+            ) : grupos.map((g) => {
+              const { totalUSD, totalBS, porCobrar, pagadas } = totalesGrupo(g)
+              return (
+                <div key={`${g.cliente_id}|${g.periodo}`} className="p-4 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-200">{g.nombre}</p>
+                      <p className="text-xs text-slate-500 capitalize">
+                        {format(new Date(g.periodo + '-01T00:00:00'), 'MMMM yyyy', { locale: es })}
+                        {' · '}{g.notas.length} nota{g.notas.length === 1 ? '' : 's'} ({pagadas} pagada{pagadas === 1 ? '' : 's'})
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-mono font-bold text-slate-200">
+                        {totalUSD > 0 && `$${totalUSD.toFixed(2)}`}
+                        {totalUSD > 0 && totalBS > 0 && ' + '}
+                        {totalBS > 0 && `Bs.${totalBS.toFixed(2)}`}
+                      </p>
+                      <p className={`text-xs font-mono ${porCobrar > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                        {porCobrar > 0 ? `Por cobrar $${porCobrar.toFixed(2)}` : 'Al día ✓'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button onClick={() => imprimirGrupo(g)} className="btn-secondary flex-1 !py-2.5 text-sm justify-center">
+                      <Printer className="w-4 h-4" /> Factura PDF
+                    </button>
+                    <button onClick={() => whatsappGrupo(g)} className="btn-success flex-1 !py-2.5 text-sm justify-center">
+                      <MessageCircle className="w-4 h-4" /> WhatsApp
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          {/* Escritorio: tabla */}
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full">
               <thead className="bg-slate-800/50">
                 <tr>
@@ -248,11 +318,7 @@ export default function NotasPago() {
                     Sin notas para agrupar
                   </td></tr>
                 ) : grupos.map((g) => {
-                  const totalUSD = g.notas.filter(n => n.moneda === 'USD').reduce((s, n) => s + Number(n.monto), 0)
-                  const totalBS = g.notas.filter(n => n.moneda === 'BS').reduce((s, n) => s + Number(n.monto), 0)
-                  const porCobrar = g.notas.filter(n => ['pendiente', 'vencida'].includes(n.estado))
-                    .reduce((s, n) => s + saldoDe(n), 0)
-                  const pagadas = g.notas.filter(n => n.estado === 'pagada').length
+                  const { totalUSD, totalBS, porCobrar, pagadas } = totalesGrupo(g)
                   return (
                     <tr key={`${g.cliente_id}|${g.periodo}`} className="table-row">
                       <td className="table-cell font-medium text-slate-200">{g.nombre}</td>
@@ -294,7 +360,60 @@ export default function NotasPago() {
       {/* Tabla */}
       {vista === 'lista' && (
       <div className="card p-0 overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* Móvil: tarjetas con toda la información legible */}
+        <div className="sm:hidden divide-y divide-white/[0.06]">
+          {filtrados.length === 0 ? (
+            <p className="text-center text-slate-500 py-10 text-sm">Sin notas para este filtro</p>
+          ) : filtrados.map((n) => (
+            <div key={n.id} className="p-4 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-mono text-[11px] text-indigo-400">{n.numero}</p>
+                  <p className="font-medium text-slate-200">{n.clientes?.nombre}</p>
+                </div>
+                <span className={ESTADO_BADGE[n.estado] || 'badge-inactive'}>{n.estado}</span>
+              </div>
+              <p className="text-sm text-slate-400 leading-snug">{n.concepto}</p>
+              <div className="flex items-end justify-between">
+                <span className={`flex items-center gap-1 text-xs ${n.estado === 'vencida' ? 'text-red-400' : 'text-slate-500'}`}>
+                  <Clock className="w-3 h-3" />
+                  Vence {format(new Date(n.fecha_vencimiento + 'T00:00:00'), 'dd MMM yyyy', { locale: es })}
+                </span>
+                <div className="text-right">
+                  <span className={`font-mono font-bold text-base ${n.estado === 'pagada' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {fmtMonto(n.monto, n.moneda)}
+                  </span>
+                  {Number(n.abonado) > 0 && n.estado !== 'pagada' && (
+                    <span className="block text-[10px] text-emerald-400">
+                      Abonado {fmtMonto(n.abonado, n.moneda)} · resta {fmtMonto(saldoDe(n), n.moneda)}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                {n.estado !== 'pagada' && n.estado !== 'anulada' && (
+                  <button onClick={() => abrirConfirmarPago(n)} className="btn-success flex-1 !py-2.5 text-sm justify-center">
+                    <CheckCircle className="w-4 h-4" /> Registrar pago
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    const ok = imprimirNotaPago(n, user?.email)
+                    if (!ok) addToast('Permite las ventanas emergentes para imprimir', 'warning')
+                  }}
+                  className="p-2.5 text-slate-300 bg-slate-800/70 rounded-xl" title="Imprimir / PDF"
+                >
+                  <Printer className="w-4 h-4" />
+                </button>
+                <button onClick={() => eliminar(n)} className="p-2.5 text-slate-400 bg-slate-800/70 rounded-xl" title="Eliminar">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* Escritorio: tabla */}
+        <div className="hidden sm:block overflow-x-auto">
           <table className="w-full">
             <thead className="bg-slate-800/50">
               <tr>
@@ -320,7 +439,7 @@ export default function NotasPago() {
                     </span>
                   </td>
                   <td className="table-cell font-medium">{n.clientes?.nombre}</td>
-                  <td className="table-cell hidden md:table-cell text-slate-400 text-xs max-w-[200px] truncate">{n.concepto}</td>
+                  <td className="table-cell hidden md:table-cell text-slate-400 text-xs whitespace-normal max-w-[340px] leading-snug">{n.concepto}</td>
                   <td className="table-cell text-right font-mono font-semibold">
                     <span className={n.estado === 'pagada' ? 'text-emerald-400' : 'text-amber-400'}>
                       {n.moneda === 'USD' ? '$' : 'Bs.'}{Number(n.monto).toFixed(2)}
