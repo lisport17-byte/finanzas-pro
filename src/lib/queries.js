@@ -709,6 +709,7 @@ export async function obtenerResumenDashboard() {
     { data: serviciosVencidos },
     totalIngresosMes,
     totalGastosMes,
+    { data: creditosActivos },
   ] = await Promise.all([
     supabase.from('clientes').select('id', { count: 'exact', head: true }),
     supabase.from('clientes').select('id', { count: 'exact', head: true }).eq('estado', 'activo'),
@@ -726,9 +727,34 @@ export async function obtenerResumenDashboard() {
       .order('fecha_renovacion').limit(5),
     ingresos.totalMes(mes, anio),
     gastos.totalMes(mes, anio),
+    supabase.from('creditos').select('*').eq('estado', 'activo').order('fecha_inicio'),
   ])
 
   const totalCobrar = notasPendientes?.reduce((s, n) => s + Number(n.monto) - Number(n.abonado || 0), 0) || 0
+
+  // Pasivos: créditos activos (giros de tarjeta, préstamos). Si la tabla no
+  // existe aún (migración pendiente), data llega null y todo queda en cero.
+  const listaCreditos = creditosActivos || []
+  const saldoCredito = (c) => Math.max(0, Number(c.monto_total) - Number(c.abonado || 0))
+  const deudaPorPagar = listaCreditos
+    .filter((c) => c.moneda === 'USD')
+    .reduce((s, c) => s + saldoCredito(c), 0)
+  const cuotasMesUSD = listaCreditos
+    .filter((c) => c.moneda === 'USD')
+    .reduce((s, c) => s + Math.min(Number(c.monto_cuota) || Number(c.monto_total) / Number(c.num_cuotas), saldoCredito(c)), 0)
+  const creditos = listaCreditos.map((c) => {
+    const prox = addMonths(new Date(c.fecha_inicio + 'T00:00:00'), (c.cuotas_pagadas || 0) + 1)
+    if (c.dia_pago) {
+      const ultimoDia = new Date(prox.getFullYear(), prox.getMonth() + 1, 0).getDate()
+      prox.setDate(Math.min(c.dia_pago, ultimoDia))
+    }
+    return {
+      ...c,
+      saldo: saldoCredito(c),
+      progreso: Math.min(100, (Number(c.abonado || 0) / Number(c.monto_total)) * 100),
+      proxima_cuota: fmtFecha(prox, 'yyyy-MM-dd'),
+    }
+  })
 
   return {
     totalClientes: totalClientes || 0,
@@ -739,5 +765,8 @@ export async function obtenerResumenDashboard() {
     totalIngresosMes,
     totalGastosMes,
     utilidadMes: totalIngresosMes - totalGastosMes,
+    deudaPorPagar,
+    cuotasMesUSD,
+    creditos,
   }
 }

@@ -5,9 +5,10 @@ import useStore from '../store/useStore'
 import { fmtUSD, MESES_CORTOS } from '../lib/format'
 import {
   Users, TrendingUp, TrendingDown, DollarSign, Repeat,
-  AlertTriangle, Clock, ArrowRight, ArrowUpRight, ArrowDownRight, Wallet
+  AlertTriangle, Clock, ArrowRight, ArrowUpRight, ArrowDownRight, Wallet, Landmark
 } from 'lucide-react'
-import { differenceInDays } from 'date-fns'
+import { differenceInDays, format } from 'date-fns'
+import { es } from 'date-fns/locale'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell
@@ -180,9 +181,9 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* Utilidad + clientes */}
-      <div className="grid lg:grid-cols-3 gap-4">
-        <div className="card lg:col-span-2 relative overflow-hidden">
+      {/* Utilidad + clientes + deuda */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="card col-span-2 relative overflow-hidden">
           <div className="absolute inset-0 opacity-40 pointer-events-none"
                style={{ backgroundImage: `radial-gradient(ellipse 60% 80% at 15% 0%, ${datos.utilidadMes >= 0 ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'}, transparent)` }} />
           <div className="relative flex items-center justify-between">
@@ -194,6 +195,12 @@ export default function Dashboard() {
               <p className="text-xs text-slate-500 mt-2">
                 Margen: {datos.totalIngresosMes > 0 ? `${((datos.utilidadMes / datos.totalIngresosMes) * 100).toFixed(1)}%` : '—'} · Ingresos − Gastos
               </p>
+              <p className="text-xs text-slate-500 mt-1">
+                Posición neta (por cobrar − deudas):{' '}
+                <span className={`font-bold tabular ${datos.totalCobrar - datos.deudaPorPagar >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {fmtUSD(datos.totalCobrar - datos.deudaPorPagar)}
+                </span>
+              </p>
             </div>
             <Wallet className={`w-16 h-16 ${datos.utilidadMes >= 0 ? 'text-emerald-500' : 'text-red-500'} opacity-20`} />
           </div>
@@ -204,6 +211,13 @@ export default function Dashboard() {
           subtitulo={`de ${datos.totalClientes} totales`}
           icono={Users}
           color="indigo"
+        />
+        <StatCard
+          titulo="Deudas por pagar"
+          valor={fmtUSD(datos.deudaPorPagar)}
+          subtitulo={datos.deudaPorPagar > 0 ? `cuotas del mes: ${fmtUSD(datos.cuotasMesUSD)}` : 'sin créditos activos'}
+          icono={Landmark}
+          color="red"
         />
       </div>
 
@@ -318,6 +332,49 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* Créditos y financiamiento */}
+      {datos.creditos.length > 0 && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-display text-sm font-bold text-slate-200 flex items-center gap-2">
+                <Landmark className="w-4 h-4 text-red-400" />
+                Créditos y Financiamiento
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {datos.creditos.length} activo{datos.creditos.length === 1 ? '' : 's'} · las cuotas pagadas entran a Gastos como "financiamiento"
+              </p>
+            </div>
+            <Link to="/creditos" className="text-xs text-brand-300 hover:text-brand-100 flex items-center gap-1 font-medium">
+              Ver todos <ArrowRight className="w-3 h-3" />
+            </Link>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-x-8 gap-y-4">
+            {datos.creditos.map((c) => (
+              <div key={c.id}>
+                <div className="flex items-center justify-between text-xs mb-1.5 gap-2">
+                  <span className="text-slate-300 font-medium truncate">{c.acreedor}</span>
+                  <span className="font-bold text-red-400 tabular whitespace-nowrap">
+                    {c.moneda === 'USD' ? fmtUSD(c.saldo) : `Bs.${Number(c.saldo).toFixed(2)}`}
+                  </span>
+                </div>
+                <div className="h-1.5 rounded-full bg-white/[0.05] overflow-hidden">
+                  <div className="h-full rounded-full transition-all duration-700"
+                       style={{
+                         width: `${c.progreso}%`,
+                         backgroundImage: 'linear-gradient(90deg, #6366f1, #34d399)',
+                       }} />
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Cuota {Math.min((c.cuotas_pagadas || 0) + 1, c.num_cuotas)} de {c.num_cuotas} · próxima:{' '}
+                  {format(new Date(c.proxima_cuota + 'T00:00:00'), 'dd MMM yyyy', { locale: es })}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Alertas */}
       <div className="grid lg:grid-cols-2 gap-4">
