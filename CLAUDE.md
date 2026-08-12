@@ -74,6 +74,8 @@ Para GitHub Actions: agregar en Settings → Secrets → Actions
 | `notas_pago` | Facturas/notas de cobro |
 | `ingresos` | Pagos recibidos (USD o Bs con tasa BCV) |
 | `gastos` | Gastos mensuales recurrentes o únicos |
+| `creditos` | Deudas propias: giros de tarjeta, préstamos bancarios/personales en cuotas |
+| `creditos_pagos` | Historial de cuotas pagadas de cada crédito (vinculadas al gasto) |
 | `configuracion` | Parámetros del sistema |
 | `push_suscripciones` | Dispositivos suscritos a Web Push (ver `supabase-push.sql`) |
 
@@ -126,6 +128,19 @@ npm run preview  # Preview del build
   `normalizarNumero()` asume Venezuela (+58) si el número empieza por 0.
 - Campo `clientes.whatsapp` (migración en `supabase-whatsapp.sql`); si falta, se usa `telefono`.
 - Envío 100% automático con PDF adjunto requiere la API de WhatsApp Business (Meta) — pendiente.
+
+## Créditos / Financiamiento (deudas propias)
+- Página `Creditos.jsx` (ruta `/creditos`): giros de tarjeta de crédito, préstamos
+  bancarios y préstamos de personas naturales, pagaderos en cuotas.
+- `creditos.pagarCuota()` registra cada cuota como **gasto** del mes (categoría
+  `financiamiento`, agregada al CHECK de gastos) → fluye a Reportes/Dashboard sin
+  doble contabilidad. El pago queda en `creditos_pagos` vinculado al gasto.
+- El crédito pasa a `pagado` cuando `abonado >= monto_total`. Próxima cuota
+  estimada: `fecha_inicio + (cuotas_pagadas + 1) meses`, ajustada a `dia_pago`.
+- Migración: tablas y CHECK en `supabase-pendiente.sql` (archivo consolidado con
+  TODO lo pendiente de ejecutar en Supabase; idempotente).
+- `confirmarPago` de CXC tiene fallback si la columna `abonado` no existe aún
+  (migración sin ejecutar): el pago total funciona, el abono avisa qué falta.
 
 ## Lógica de renovaciones
 - `fecha_renovacion` se calcula automáticamente: inicio + 1 mes (mensual) o + 1 año (anual)

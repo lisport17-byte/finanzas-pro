@@ -332,6 +332,90 @@ export const gastos = {
   },
 }
 
+// ─── CRÉDITOS / FINANCIAMIENTO ────────────────────────────────────────────────
+// Deudas propias: giros de tarjeta de crédito, préstamos bancarios y préstamos
+// de personas naturales, pagaderos en cuotas. Cada cuota pagada se registra
+// automáticamente como GASTO (categoría "financiamiento") para que fluya a
+// Reportes y Dashboard sin doble contabilidad.
+
+export const creditos = {
+  obtenerTodos: () =>
+    supabase
+      .from('creditos')
+      .select('*')
+      .order('estado')
+      .order('fecha_inicio', { ascending: false }),
+
+  obtenerPagos: (creditoId) =>
+    supabase
+      .from('creditos_pagos')
+      .select('*')
+      .eq('credito_id', creditoId)
+      .order('fecha_pago', { ascending: false }),
+
+  crear: (datos) =>
+    supabase.from('creditos').insert(limpiar(datos)).select().single(),
+
+  actualizar: (id, datos) =>
+    supabase.from('creditos').update(limpiar(datos)).eq('id', id).select().single(),
+
+  eliminar: (id) =>
+    supabase.from('creditos').delete().eq('id', id),
+
+  /**
+   * Registra el pago de una cuota en un solo paso:
+   * 1) crea el GASTO del mes (categoría financiamiento) → entra a Reportes
+   * 2) guarda el pago en el historial del crédito (vinculado al gasto)
+   * 3) acumula lo abonado; si cubre el total, el crédito pasa a "pagado"
+   */
+  pagarCuota: async (credito, { monto, fecha_pago, metodo_pago, referencia }, userId) => {
+    const pago = Number(monto)
+    const f = new Date(fecha_pago + 'T00:00:00')
+    const numeroCuota = Math.min((credito.cuotas_pagadas || 0) + 1, credito.num_cuotas)
+
+    const { data: gasto, error: errGasto } = await supabase.from('gastos').insert(limpiar({
+      nombre: `Cuota ${numeroCuota}/${credito.num_cuotas} — ${credito.acreedor}`,
+      categoria: 'financiamiento',
+      monto: pago,
+      moneda: credito.moneda,
+      mes: f.getMonth() + 1,
+      anio: f.getFullYear(),
+      es_recurrente: false,
+      estado: 'pagado',
+      proveedor: credito.acreedor,
+      user_id: userId,
+    })).select().single()
+    if (errGasto) return { error: errGasto }
+
+    const { error: errPago } = await supabase.from('creditos_pagos').insert(limpiar({
+      credito_id: credito.id,
+      numero_cuota: numeroCuota,
+      monto: pago,
+      moneda: credito.moneda,
+      fecha_pago,
+      metodo_pago,
+      referencia: referencia || null,
+      gasto_id: gasto?.id || null,
+      user_id: userId,
+    }))
+    if (errPago) return { error: errPago }
+
+    const abonado = Number(credito.abonado || 0) + pago
+    const saldado = abonado >= Number(credito.monto_total) - 0.009
+    const { error: errCred } = await supabase
+      .from('creditos')
+      .update({
+        abonado,
+        cuotas_pagadas: (credito.cuotas_pagadas || 0) + 1,
+        ...(saldado ? { estado: 'pagado' } : {}),
+      })
+      .eq('id', credito.id)
+    if (errCred) return { error: errCred }
+
+    return { error: null, saldado, saldoRestante: Math.max(0, Number(credito.monto_total) - abonado) }
+  },
+}
+
 // ─── FACTURACIÓN AUTOMÁTICA ───────────────────────────────────────────────────
 
 export const facturacion = {
@@ -424,10 +508,20 @@ export const facturacion = {
     const nuevoAbonado = abonadoPrevio + pago
     const completo = nuevoAbonado >= total - 0.009
 
-    const { error: errNota } = await supabase
+    let { error: errNota } = await supabase
       .from('notas_pago')
       .update({ abonado: nuevoAbonado, ...(completo ? { estado: 'pagada' } : {}) })
       .eq('id', nota.id)
+    // Compatibilidad: si la columna `abonado` aún no existe en la BD
+    // (migración supabase-pendiente.sql sin ejecutar), el pago total
+    // funciona igual que antes y el abono avisa qué falta.
+    if (errNota && /abonado/i.test(errNota.message || '')) {
+      if (!completo) {
+        return { error: { message: 'Para abonos parciales ejecuta primero supabase-pendiente.sql en Supabase (falta la columna "abonado").' } }
+      }
+      ;({ error: errNota } = await supabase
+        .from('notas_pago').update({ estado: 'pagada' }).eq('id', nota.id))
+    }
     if (errNota) return { error: errNota }
 
     const esBS = nota.moneda === 'BS'

@@ -7,7 +7,7 @@ import { Plus, CheckCircle, Trash2, RefreshCw, Copy, Download } from 'lucide-rea
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
-const CATEGORIAS = ['tecnologia', 'servicios', 'oficina', 'impuestos', 'personal', 'otro']
+const CATEGORIAS = ['tecnologia', 'servicios', 'oficina', 'impuestos', 'personal', 'financiamiento', 'otro']
 const GASTOS_PREDEFINIDOS = [
   { nombre: 'Servidor (Hosting)', categoria: 'tecnologia', proveedor: 'Hostinger/Render' },
   { nombre: 'Claude API (Anthropic)', categoria: 'tecnologia', proveedor: 'Anthropic' },

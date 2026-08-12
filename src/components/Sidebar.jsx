@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Briefcase, TrendingUp,
-  Receipt, CreditCard, Bell, LogOut, X, BarChart3, Sparkles
+  Receipt, CreditCard, Bell, LogOut, X, BarChart3, Sparkles, Landmark
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import useStore from '../store/useStore'
@@ -13,6 +13,7 @@ const navItems = [
   { to: '/cobros',    icon: CreditCard,      label: 'Cuentas x Cobrar' },
   { to: '/ingresos',  icon: TrendingUp,      label: 'Ingresos'         },
   { to: '/gastos',    icon: Receipt,         label: 'Gastos'           },
+  { to: '/creditos',  icon: Landmark,        label: 'Créditos'         },
   { to: '/reportes',  icon: BarChart3,       label: 'Reportes'         },
   { to: '/alertas',   icon: Bell,            label: 'Alertas'          },
 ]

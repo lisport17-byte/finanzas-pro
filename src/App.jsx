@@ -19,6 +19,7 @@ import Servicios from './pages/Servicios'
 import Ingresos from './pages/Ingresos'
 import Gastos from './pages/Gastos'
 import NotasPago from './pages/NotasPago'
+import Creditos from './pages/Creditos'
 import Alertas from './pages/Alertas'
 import Reportes from './pages/Reportes'
 
@@ -139,6 +140,7 @@ export default function App() {
           <Route path="ingresos" element={<Ingresos />} />
           <Route path="gastos" element={<Gastos />} />
           <Route path="cobros" element={<NotasPago />} />
+          <Route path="creditos" element={<Creditos />} />
           <Route path="reportes" element={<Reportes />} />
           <Route path="alertas" element={<Alertas />} />
         </Route>
