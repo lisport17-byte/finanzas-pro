@@ -690,6 +690,338 @@ export const reportes = {
   },
 }
 
+// ─── PROYECCIÓN Y SALUD FINANCIERA ────────────────────────────────────────────
+// Responde: ¿puedo asumir otra cuota? ¿en qué mes se aprieta el flujo?
+// Todo el análisis va en USD; los compromisos en Bs se reportan aparte para
+// no mezclar monedas sin una tasa confiable.
+
+// Helpers locales de formato (queries.js no importa la capa de presentación)
+const fmtUSD_ = (n) => `$${Number(n || 0).toFixed(2)}`
+const MESES_ = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+
+/** Umbrales de la banca para evaluar capacidad de endeudamiento */
+export const UMBRALES = {
+  DSCR_SANO: 1.5,      // cobertura del servicio de deuda (holgura del 50%)
+  DSCR_MINIMO: 1.2,    // por debajo: riesgo de impago
+  CARGA_SANA: 0.30,    // cuotas / ingreso recurrente
+  CARGA_MAXIMA: 0.40,  // por encima: sobreendeudamiento
+  USO_FLUJO_LIBRE: 0.70, // % del flujo libre que es prudente comprometer
+  CONCENTRACION_RIESGO: 0.40, // un cliente con más de esto es riesgo
+}
+
+export const proyeccion = {
+  analizar: async (meses = 6) => {
+    const hoy = new Date()
+    const anio = hoy.getFullYear()
+    const mes0 = hoy.getMonth() // 0-based
+    const inicioMes = new Date(anio, mes0, 1)
+    const finHorizonte = new Date(anio, mes0 + meses, 0)
+    const inicioMesISO = fmtFecha(inicioMes, 'yyyy-MM-dd')
+    const finISO = fmtFecha(finHorizonte, 'yyyy-MM-dd')
+    const finMesActualISO = fmtFecha(new Date(anio, mes0 + 1, 0), 'yyyy-MM-dd')
+
+    const [
+      { data: notasHorizonte },
+      { data: notasAtrasadas },
+      { data: servicios },
+      { data: gastosMes },
+      { data: creds },
+      { data: ingresosMes },
+    ] = await Promise.all([
+      supabase.from('notas_pago')
+        .select('servicio_cliente_id, fecha_vencimiento, estado, monto, moneda, abonado, clientes(nombre)')
+        .gte('fecha_vencimiento', inicioMesISO).lte('fecha_vencimiento', finISO),
+      supabase.from('notas_pago')
+        .select('monto, moneda, abonado, fecha_vencimiento, clientes(nombre)')
+        .in('estado', ['pendiente', 'vencida']).lt('fecha_vencimiento', inicioMesISO),
+      supabase.from('servicios_clientes')
+        .select('id, nombre_servicio, precio, moneda, tipo_renovacion, fecha_renovacion, clientes(nombre)')
+        .eq('estado', 'activo'),
+      supabase.from('gastos')
+        .select('nombre, categoria, monto, moneda, es_recurrente')
+        .eq('mes', mes0 + 1).eq('anio', anio),
+      supabase.from('creditos').select('*').eq('estado', 'activo'),
+      supabase.from('ingresos')
+        .select('monto, moneda, monto_usd')
+        .gte('fecha_pago', inicioMesISO).lte('fecha_pago', finMesActualISO),
+    ])
+
+    const enUSD = (monto, moneda) => (moneda === 'USD' ? Number(monto) : 0)
+    const enBS = (monto, moneda) => (moneda === 'BS' ? Number(monto) : 0)
+
+    // ── Buckets mensuales del horizonte ────────────────────────────────────
+    const buckets = Array.from({ length: meses }, (_, i) => {
+      const f = new Date(anio, mes0 + i, 1)
+      return {
+        anio: f.getFullYear(), mes: f.getMonth() + 1, clave: fmtFecha(f, 'yyyy-MM'),
+        cobrado: 0, porCobrar: 0, recurrente: 0, gastos: 0, cuotas: 0,
+        gastosBS: 0, cuotasBS: 0, compromisos: [],
+      }
+    })
+    const bucketDe = (iso) => buckets.find((b) => b.clave === (iso || '').slice(0, 7))
+
+    // Ya cobrado este mes (el mes en curso se ve completo, no solo lo futuro)
+    buckets[0].cobrado = (ingresosMes || [])
+      .reduce((s, r) => s + (r.moneda === 'USD' ? Number(r.monto) : Number(r.monto_usd || 0)), 0)
+
+    // Cartera atrasada: se espera cobrar en el mes en curso
+    const carteraAtrasada = (notasAtrasadas || [])
+      .reduce((s, n) => s + enUSD(Number(n.monto) - Number(n.abonado || 0), n.moneda), 0)
+    buckets[0].porCobrar += carteraAtrasada
+
+    // Notas ya emitidas dentro del horizonte
+    const emitidas = new Set()
+    for (const n of notasHorizonte || []) {
+      emitidas.add(`${n.servicio_cliente_id}|${n.fecha_vencimiento}`)
+      if (!['pendiente', 'vencida'].includes(n.estado)) continue
+      const b = bucketDe(n.fecha_vencimiento)
+      if (b) b.porCobrar += enUSD(Number(n.monto) - Number(n.abonado || 0), n.moneda)
+    }
+
+    // Renovaciones futuras aún sin nota emitida (misma clave que la
+    // facturación automática: servicio + fecha de vencimiento del período)
+    for (const s of servicios || []) {
+      if (s.tipo_renovacion === 'pago_unico' || Number(s.precio) <= 0) continue
+      let f = new Date(s.fecha_renovacion + 'T00:00:00')
+      for (let i = 0; i < 60 && f <= finHorizonte; i++) {
+        const iso = fmtFecha(f, 'yyyy-MM-dd')
+        if (f >= inicioMes && !emitidas.has(`${s.id}|${iso}`)) {
+          const b = bucketDe(iso)
+          if (b) b.recurrente += enUSD(s.precio, s.moneda)
+        }
+        f = s.tipo_renovacion === 'anual' ? addYears(f, 1) : addMonths(f, 1)
+      }
+    }
+
+    // ── Egresos ────────────────────────────────────────────────────────────
+    // Mes en curso: TODOS los gastos del mes (incluye cuotas ya pagadas como
+    // gasto "financiamiento"). Meses futuros: solo la base recurrente, porque
+    // las cuotas futuras se calculan del cronograma de créditos (sin duplicar).
+    const gastosDelMes = gastosMes || []
+    buckets[0].gastos = gastosDelMes.reduce((s, g) => s + enUSD(g.monto, g.moneda), 0)
+    buckets[0].gastosBS = gastosDelMes.reduce((s, g) => s + enBS(g.monto, g.moneda), 0)
+
+    const baseRecurrente = gastosDelMes
+      .filter((g) => g.es_recurrente && g.categoria !== 'financiamiento')
+    const gastoFijo = baseRecurrente.reduce((s, g) => s + enUSD(g.monto, g.moneda), 0)
+    const gastoFijoBS = baseRecurrente.reduce((s, g) => s + enBS(g.monto, g.moneda), 0)
+    for (let i = 1; i < buckets.length; i++) {
+      buckets[i].gastos = gastoFijo
+      buckets[i].gastosBS = gastoFijoBS
+    }
+
+    // Cronograma de cuotas PENDIENTES de cada crédito activo
+    const creditos = creds || []
+    const cuotaDe = (c) => {
+      const saldo = Math.max(0, Number(c.monto_total) - Number(c.abonado || 0))
+      return Math.min(Number(c.monto_cuota) || Number(c.monto_total) / Number(c.num_cuotas), saldo)
+    }
+    let servicioDeuda = 0, servicioDeudaBS = 0, deudaTotal = 0, deudaTotalBS = 0
+    for (const c of creditos) {
+      const saldo = Math.max(0, Number(c.monto_total) - Number(c.abonado || 0))
+      deudaTotal += enUSD(saldo, c.moneda)
+      deudaTotalBS += enBS(saldo, c.moneda)
+      servicioDeuda += enUSD(cuotaDe(c), c.moneda)
+      servicioDeudaBS += enBS(cuotaDe(c), c.moneda)
+
+      const restantes = Math.max(0, Number(c.num_cuotas) - Number(c.cuotas_pagadas || 0))
+      let pendiente = saldo
+      for (let k = 1; k <= restantes && pendiente > 0.009; k++) {
+        const f = addMonths(new Date(c.fecha_inicio + 'T00:00:00'), Number(c.cuotas_pagadas || 0) + k)
+        if (c.dia_pago) {
+          const ultimo = new Date(f.getFullYear(), f.getMonth() + 1, 0).getDate()
+          f.setDate(Math.min(c.dia_pago, ultimo))
+        }
+        const cuota = Math.min(Number(c.monto_cuota) || Number(c.monto_total) / Number(c.num_cuotas), pendiente)
+        pendiente -= cuota
+        if (f > finHorizonte) break
+        const b = bucketDe(fmtFecha(f, 'yyyy-MM-dd'))
+        if (!b) continue
+        if (c.moneda === 'USD') b.cuotas += cuota
+        else b.cuotasBS += cuota
+        b.compromisos.push({
+          acreedor: c.acreedor, monto: cuota, moneda: c.moneda,
+          fecha: fmtFecha(f, 'yyyy-MM-dd'),
+          cuota: Number(c.cuotas_pagadas || 0) + k, total: Number(c.num_cuotas),
+        })
+      }
+    }
+
+    // ── Flujo y acumulado ──────────────────────────────────────────────────
+    let acumulado = 0
+    const serie = buckets.map((b) => {
+      const ingresos = b.cobrado + b.porCobrar + b.recurrente
+      const egresos = b.gastos + b.cuotas
+      const flujo = ingresos - egresos
+      acumulado += flujo
+      return { ...b, ingresos, egresos, flujo, acumulado }
+    })
+
+    // ── Indicadores de capacidad ───────────────────────────────────────────
+    const mrr = (servicios || []).reduce((s, sv) => {
+      if (sv.tipo_renovacion === 'pago_unico') return s
+      const v = enUSD(sv.precio, sv.moneda)
+      return s + (sv.tipo_renovacion === 'anual' ? v / 12 : v)
+    }, 0)
+
+    const capacidadPago = mrr - gastoFijo // flujo libre antes del servicio de deuda
+    const dscr = servicioDeuda > 0 ? capacidadPago / servicioDeuda : null
+    const cargaDeuda = mrr > 0 ? servicioDeuda / mrr : 0
+    const porCobrarTotal = serie.reduce((s, b) => s + b.porCobrar, 0)
+
+    // Cuota adicional segura: debe cumplir las TRES restricciones a la vez, así
+    // que manda la más estricta. Si solo se mirara el flujo libre, la app podría
+    // sugerir una cuota que luego el simulador marca en rojo por carga de deuda.
+    const topes = {
+      flujo: capacidadPago * UMBRALES.USO_FLUJO_LIBRE - servicioDeuda,
+      carga: mrr * UMBRALES.CARGA_SANA - servicioDeuda,
+      cobertura: capacidadPago / UMBRALES.DSCR_SANO - servicioDeuda,
+    }
+    const [limitante, topeMin] = Object.entries(topes).sort((a, b) => a[1] - b[1])[0]
+    // Se redondea hacia abajo: en deuda, equivocarse por defecto es lo seguro
+    const capacidadAdicional = Math.max(0, Math.floor(topeMin * 100) / 100)
+    const ETIQUETA_LIMITE = {
+      flujo: 'tu flujo libre disponible',
+      carga: `el techo de carga de deuda (${UMBRALES.CARGA_SANA * 100}% del ingreso recurrente)`,
+      cobertura: `la cobertura mínima sana (${UMBRALES.DSCR_SANO}×)`,
+    }
+
+    // Concentración de ingreso recurrente por cliente
+    const porCliente = {}
+    for (const sv of servicios || []) {
+      if (sv.tipo_renovacion === 'pago_unico') continue
+      const v = enUSD(sv.precio, sv.moneda)
+      const mensual = sv.tipo_renovacion === 'anual' ? v / 12 : v
+      const nombre = sv.clientes?.nombre || 'Sin cliente'
+      porCliente[nombre] = (porCliente[nombre] || 0) + mensual
+    }
+    const top = Object.entries(porCliente).sort((a, b) => b[1] - a[1])[0]
+    const concentracion = top && mrr > 0
+      ? { nombre: top[0], monto: top[1], pct: top[1] / mrr }
+      : null
+
+    const mesesFlujoNegativo = serie.filter((b) => b.flujo < 0)
+    const mesesSinCaja = serie.filter((b) => b.acumulado < 0)
+
+    // ── Semáforo ───────────────────────────────────────────────────────────
+    const razonesRojas = []
+    if (capacidadPago <= 0)
+      razonesRojas.push('tus gastos fijos ya consumen todo el ingreso recurrente')
+    if (dscr !== null && dscr < UMBRALES.DSCR_MINIMO)
+      razonesRojas.push(`la cobertura de deuda es ${dscr.toFixed(2)}× (mínimo sano ${UMBRALES.DSCR_MINIMO}×)`)
+    if (cargaDeuda > UMBRALES.CARGA_MAXIMA)
+      razonesRojas.push(`las cuotas consumen ${(cargaDeuda * 100).toFixed(0)}% del ingreso recurrente (máximo ${UMBRALES.CARGA_MAXIMA * 100}%)`)
+    if (mesesSinCaja.length > 0)
+      razonesRojas.push(`el flujo acumulado se vuelve negativo en ${mesesSinCaja.length} mes(es) del horizonte`)
+
+    const razonesAmarillas = []
+    if (dscr !== null && dscr >= UMBRALES.DSCR_MINIMO && dscr < UMBRALES.DSCR_SANO)
+      razonesAmarillas.push(`la cobertura de deuda es ${dscr.toFixed(2)}× (holgura ideal ${UMBRALES.DSCR_SANO}×)`)
+    if (cargaDeuda > UMBRALES.CARGA_SANA && cargaDeuda <= UMBRALES.CARGA_MAXIMA)
+      razonesAmarillas.push(`las cuotas ya son ${(cargaDeuda * 100).toFixed(0)}% del ingreso recurrente (recomendado ≤ ${UMBRALES.CARGA_SANA * 100}%)`)
+    if (mesesFlujoNegativo.length > 0)
+      razonesAmarillas.push(`${mesesFlujoNegativo.length} mes(es) cierran con flujo negativo`)
+    if (concentracion && concentracion.pct > UMBRALES.CONCENTRACION_RIESGO)
+      razonesAmarillas.push(`${concentracion.nombre} concentra ${(concentracion.pct * 100).toFixed(0)}% de tu ingreso recurrente`)
+
+    const nivel = razonesRojas.length ? 'rojo' : razonesAmarillas.length ? 'amarillo' : 'verde'
+    const semaforo = {
+      nivel,
+      titulo: nivel === 'rojo' ? 'No tomes más créditos ahora'
+        : nivel === 'amarillo' ? 'Puedes endeudarte, pero con cuidado'
+        : 'Tienes margen para financiarte',
+      razones: nivel === 'rojo' ? razonesRojas : razonesAmarillas,
+      cuotaMaximaSugerida: nivel === 'rojo' ? 0 : capacidadAdicional,
+    }
+
+    // ── Recomendaciones accionables ────────────────────────────────────────
+    const rec = []
+    if (nivel === 'rojo') {
+      rec.push({
+        nivel: 'critico', titulo: 'Prioriza liberar flujo antes de endeudarte',
+        texto: `Primero baja el servicio de deuda actual (${fmtUSD_(servicioDeuda)}/mes) o sube el ingreso recurrente. Con los números de hoy, una cuota nueva se pagaría con dinero que no tienes.`,
+      })
+    } else {
+      rec.push({
+        nivel: 'ok', titulo: `Cuota nueva máxima: ${fmtUSD_(capacidadAdicional)} al mes`,
+        texto: `Tu flujo libre es ${fmtUSD_(capacidadPago)}/mes y hoy el límite lo marca ${ETIQUETA_LIMITE[limitante]}. Por encima de ese monto entras en zona de riesgo, aunque el dinero del mes te alcance.`,
+      })
+    }
+    if (porCobrarTotal > 0) {
+      const mesesEquivalentes = mrr > 0 ? porCobrarTotal / mrr : 0
+      rec.push({
+        nivel: 'info', titulo: `Cobra tu cartera antes de pedir prestado: ${fmtUSD_(porCobrarTotal)}`,
+        texto: `Equivale a ${mesesEquivalentes.toFixed(1)} mes(es) de ingreso recurrente${carteraAtrasada > 0 ? `, de los cuales ${fmtUSD_(carteraAtrasada)} ya está atrasado` : ''}. Es financiamiento sin intereses que ya te pertenece.`,
+      })
+    }
+    for (const b of mesesSinCaja.slice(0, 2)) {
+      rec.push({
+        nivel: 'critico', titulo: `${MESES_[b.mes - 1]} ${b.anio}: te quedarías sin caja`,
+        texto: `Flujo acumulado ${fmtUSD_(b.acumulado)}. Compromisos del mes: ${fmtUSD_(b.egresos)} contra ${fmtUSD_(b.ingresos)} de ingreso esperado. Adelanta cobros o reprograma cuotas de ese mes.`,
+      })
+    }
+    for (const b of mesesFlujoNegativo.filter((m) => m.acumulado >= 0).slice(0, 2)) {
+      rec.push({
+        nivel: 'aviso', titulo: `${MESES_[b.mes - 1]} ${b.anio}: mes apretado`,
+        texto: `Cierra en ${fmtUSD_(b.flujo)}. Lo cubres con el acumulado (${fmtUSD_(b.acumulado)}), pero no asumas cuotas nuevas que caigan en ese mes.`,
+      })
+    }
+    if (concentracion && concentracion.pct > UMBRALES.CONCENTRACION_RIESGO) {
+      const sinCliente = capacidadPago - concentracion.monto
+      rec.push({
+        nivel: 'aviso', titulo: `Dependes demasiado de ${concentracion.nombre}`,
+        texto: `Aporta ${(concentracion.pct * 100).toFixed(0)}% de tu ingreso recurrente. Si se va, tu flujo libre pasaría a ${fmtUSD_(sinCliente)}/mes${sinCliente < servicioDeuda ? ' — no alcanzaría para las cuotas actuales' : ''}. Evita cuotas a largo plazo apoyadas en un solo cliente.`,
+      })
+    }
+    if (servicioDeudaBS > 0 || gastoFijoBS > 0) {
+      rec.push({
+        nivel: 'info', titulo: 'Tienes compromisos en bolívares',
+        texto: `Cuotas por Bs.${servicioDeudaBS.toFixed(2)} y gastos fijos por Bs.${gastoFijoBS.toFixed(2)} al mes. No se suman al análisis en USD: revísalos con la tasa del día porque la devaluación los encarece.`,
+      })
+    }
+    if (mrr > 0 && gastoFijo / mrr > 0.7) {
+      rec.push({
+        nivel: 'aviso', titulo: 'Tus gastos fijos son muy altos',
+        texto: `Consumen ${((gastoFijo / mrr) * 100).toFixed(0)}% del ingreso recurrente. Cada punto que recortes es capacidad de pago directa.`,
+      })
+    }
+
+    return {
+      serie,
+      indicadores: {
+        mrr, gastoFijo, gastoFijoBS, capacidadPago, servicioDeuda, servicioDeudaBS,
+        dscr, cargaDeuda, capacidadAdicional, deudaTotal, deudaTotalBS,
+        porCobrarTotal, carteraAtrasada, concentracion,
+        creditosActivos: creditos.length,
+      },
+      semaforo,
+      recomendaciones: rec,
+    }
+  },
+
+  /**
+   * Simula el impacto de una cuota nueva sobre los indicadores actuales.
+   * Se usa en el formulario de créditos para avisar ANTES de firmar.
+   */
+  simular: (indicadores, cuotaNueva) => {
+    const cuota = Number(cuotaNueva) || 0
+    if (!cuota) return null
+    const { mrr, capacidadPago, servicioDeuda } = indicadores
+    const nuevoServicio = servicioDeuda + cuota
+    const nuevoDscr = nuevoServicio > 0 ? capacidadPago / nuevoServicio : null
+    const nuevaCarga = mrr > 0 ? nuevoServicio / mrr : 0
+    const flujoRestante = capacidadPago - nuevoServicio
+    const nivel =
+      flujoRestante < 0 || (nuevoDscr !== null && nuevoDscr < UMBRALES.DSCR_MINIMO) || nuevaCarga > UMBRALES.CARGA_MAXIMA
+        ? 'rojo'
+        : (nuevoDscr !== null && nuevoDscr < UMBRALES.DSCR_SANO) || nuevaCarga > UMBRALES.CARGA_SANA
+          ? 'amarillo'
+          : 'verde'
+    return { cuota, nuevoServicio, nuevoDscr, nuevaCarga, flujoRestante, nivel }
+  },
+}
+
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 
 export async function obtenerResumenDashboard() {

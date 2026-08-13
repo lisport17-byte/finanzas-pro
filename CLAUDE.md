@@ -142,6 +142,27 @@ npm run preview  # Preview del build
 - `confirmarPago` de CXC tiene fallback si la columna `abonado` no existe aún
   (migración sin ejecutar): el pago total funciona, el abono avisa qué falta.
 
+## Proyección y salud financiera (`/proyeccion`)
+- `proyeccion.analizar(meses)` en `queries.js` proyecta 6 meses de flujo de caja:
+  - **Ingresos**: cobrado del mes + notas pendientes/vencidas (la cartera atrasada
+    cae en el mes en curso) + renovaciones futuras aún sin nota emitida (misma
+    clave `servicio_cliente_id + fecha` que la facturación, para no duplicar).
+  - **Egresos**: mes en curso = todos los gastos reales del mes (incluye cuotas ya
+    pagadas como gasto `financiamiento`); meses futuros = base recurrente
+    (excluye `financiamiento`) + cronograma de cuotas **pendientes** de créditos.
+    Así una cuota nunca se cuenta dos veces.
+- Indicadores tipo banca: flujo libre (`mrr - gastoFijo`), servicio de deuda,
+  **DSCR** (`flujo libre / cuotas`), carga de deuda (`cuotas / mrr`), concentración
+  de cliente. Umbrales exportados en `UMBRALES`.
+- **`capacidadAdicional`** (cuota nueva segura) = mínimo de tres topes: flujo libre
+  al 70%, carga de deuda al 30% y cobertura 1.5×, redondeado hacia abajo.
+  INVARIANTE: la cuota sugerida siempre debe simular en verde — si solo se mira el
+  flujo libre, la app sugiere un monto que su propio simulador rechaza.
+- `proyeccion.simular(indicadores, cuota)` alimenta el aviso en vivo del formulario
+  de Créditos (verde/amarillo/rojo antes de firmar).
+- Todo el análisis va en USD; los compromisos en Bs se reportan aparte (no hay
+  tasa BCV almacenada, mezclarlos daría consejos falsos).
+
 ## Lógica de renovaciones
 - `fecha_renovacion` se calcula automáticamente: inicio + 1 mes (mensual) o + 1 año (anual)
 - Al reactivar un servicio suspendido, la nueva renovación parte de HOY

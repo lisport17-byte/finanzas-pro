@@ -201,6 +201,9 @@ export default function Dashboard() {
                   {fmtUSD(datos.totalCobrar - datos.deudaPorPagar)}
                 </span>
               </p>
+              <Link to="/proyeccion" className="text-xs text-brand-300 hover:text-brand-100 inline-flex items-center gap-1 mt-2 font-medium">
+                Ver proyección y capacidad de endeudamiento <ArrowRight className="w-3 h-3" />
+              </Link>
             </div>
             <Wallet className={`w-16 h-16 ${datos.utilidadMes >= 0 ? 'text-emerald-500' : 'text-red-500'} opacity-20`} />
           </div>

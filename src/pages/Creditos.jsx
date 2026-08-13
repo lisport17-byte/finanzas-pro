@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { creditos as db } from '../lib/queries'
+import { creditos as db, proyeccion, UMBRALES } from '../lib/queries'
 import useStore from '../store/useStore'
 import Modal from '../components/Modal'
-import { fmtMonto } from '../lib/format'
-import { Plus, Search, Edit2, Trash2, CheckCircle, Landmark, CreditCard, User, HandCoins, Calendar, History } from 'lucide-react'
+import { fmtMonto, fmtUSD } from '../lib/format'
+import { Plus, Search, Edit2, Trash2, CheckCircle, Landmark, CreditCard, User, HandCoins, Calendar, History, ShieldCheck, ShieldAlert, ShieldX, Gauge } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { format, addMonths } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -41,6 +42,12 @@ function proximaCuota(c) {
 
 const saldoDe = (c) => Math.max(0, Number(c.monto_total) - Number(c.abonado || 0))
 
+const SIM_ESTILO = {
+  verde:    { icono: ShieldCheck, color: 'text-emerald-400', borde: 'border-emerald-500/30', fondo: 'bg-emerald-500/[0.08]', titulo: 'Cuota sostenible' },
+  amarillo: { icono: ShieldAlert, color: 'text-amber-400',   borde: 'border-amber-500/30',   fondo: 'bg-amber-500/[0.08]',   titulo: 'Ajustado — piénsalo bien' },
+  rojo:     { icono: ShieldX,     color: 'text-red-400',     borde: 'border-red-500/30',     fondo: 'bg-red-500/[0.08]',     titulo: 'No deberías asumir esta cuota' },
+}
+
 export default function Creditos() {
   const [lista, setLista] = useState([])
   const [filtro, setFiltro] = useState('')
@@ -50,9 +57,12 @@ export default function Creditos() {
   const [formPago, setFormPago] = useState(null)
   const [pagos, setPagos] = useState([])
   const [guardando, setGuardando] = useState(false)
+  const [salud, setSalud] = useState(null) // indicadores para el simulador
   const { addToast, user } = useStore()
 
   const cargar = async () => {
+    // Indicadores de capacidad (para simular el impacto de una cuota nueva)
+    proyeccion.analizar(6).then((r) => setSalud(r.indicadores)).catch(() => setSalud(null))
     try {
       const { data, error } = await db.obtenerTodos()
       if (error) throw error
@@ -362,6 +372,63 @@ export default function Creditos() {
                 💡 {form.num_cuotas} cuota(s) de <b className="text-slate-200">{fmtMonto(Number(form.monto_cuota) || Number(form.monto_total) / (Number(form.num_cuotas) || 1), form.moneda)}</b> — la primera vence un mes después de la fecha del crédito.
               </p>
             )}
+
+            {/* Simulador de impacto: avisa ANTES de comprometerse */}
+            {modal === 'crear' && salud && form.moneda === 'USD' && (() => {
+              const cuota = Number(form.monto_cuota) || (Number(form.monto_total) / (Number(form.num_cuotas) || 1))
+              const sim = proyeccion.simular(salud, cuota)
+              if (!sim) return null
+              const e = SIM_ESTILO[sim.nivel]
+              const Icono = e.icono
+              return (
+                <div className={`rounded-xl border p-3.5 ${e.borde} ${e.fondo}`}>
+                  <div className="flex items-start gap-2.5">
+                    <Icono className={`w-5 h-5 flex-shrink-0 mt-0.5 ${e.color}`} />
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-sm font-bold ${e.color}`}>{e.titulo}</p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2 text-xs">
+                        <p className="text-slate-400">
+                          Cuotas totales:{' '}
+                          <b className="font-mono text-slate-200">{fmtUSD(sim.nuevoServicio)}</b>
+                          <span className="text-slate-500"> /mes</span>
+                        </p>
+                        <p className="text-slate-400">
+                          Carga de deuda:{' '}
+                          <b className={`font-mono ${sim.nuevaCarga > UMBRALES.CARGA_MAXIMA ? 'text-red-400' : sim.nuevaCarga > UMBRALES.CARGA_SANA ? 'text-amber-400' : 'text-emerald-400'}`}>
+                            {(sim.nuevaCarga * 100).toFixed(0)}%
+                          </b>
+                          <span className="text-slate-500"> (límite {UMBRALES.CARGA_MAXIMA * 100}%)</span>
+                        </p>
+                        <p className="text-slate-400">
+                          Cobertura:{' '}
+                          <b className={`font-mono ${sim.nuevoDscr < UMBRALES.DSCR_MINIMO ? 'text-red-400' : sim.nuevoDscr < UMBRALES.DSCR_SANO ? 'text-amber-400' : 'text-emerald-400'}`}>
+                            {sim.nuevoDscr === null ? '—' : `${sim.nuevoDscr.toFixed(2)}×`}
+                          </b>
+                          <span className="text-slate-500"> (sano {UMBRALES.DSCR_SANO}×)</span>
+                        </p>
+                        <p className="text-slate-400">
+                          Te quedaría:{' '}
+                          <b className={`font-mono ${sim.flujoRestante < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                            {fmtUSD(sim.flujoRestante)}
+                          </b>
+                          <span className="text-slate-500"> /mes libre</span>
+                        </p>
+                      </div>
+                      {sim.nivel === 'rojo' && (
+                        <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                          Con esta cuota tus compromisos superan lo que tu operación genera.
+                          Cuota máxima recomendada hoy:{' '}
+                          <b className="font-mono text-slate-200">{fmtUSD(salud.capacidadAdicional)}</b>/mes.
+                        </p>
+                      )}
+                      <Link to="/proyeccion" className="text-[11px] text-brand-300 hover:text-brand-100 inline-flex items-center gap-1 mt-2 font-medium">
+                        <Gauge className="w-3 h-3" /> Ver análisis completo
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={cerrar} className="btn-secondary">Cancelar</button>
               <button type="submit" disabled={guardando} className="btn-primary">
